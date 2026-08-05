@@ -1,6 +1,10 @@
 # TRI//ECHO
 
-Jogo de física mobile-first, sem backend e sem dependências. Puxa a bola branca, larga e toca nas outras duas. Cada carambola cria um Echo Rail que altera as jogadas seguintes.
+Jogo de física mobile-first, sem backend e sem dependências. Usa a branca para embocar a bola dourada ou rosa num portal situado no interior da mesa. Cada vitória muda o portal e pode criar um Echo Rail que altera as jogadas seguintes.
+
+O controlo circular **IMPACTO** é independente da mira: move o ponto para cima para seguimento, para baixo para recuo ou para os lados para efeito lateral. No modo Zen, a bola reaparece e o portal muda sem trocar de ecrã ou interromper a sessão.
+
+A potência adapta-se às dimensões da mesa. Um arrasto máximo garante alcance para pelo menos três comprimentos úteis da mesa mais três diâmetros de bola; o início da curva continua suave para jogadas de precisão.
 
 ## Jogar localmente
 
