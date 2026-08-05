@@ -20,14 +20,38 @@ with sync_playwright() as p:
         assert box and box["width"] > 300 and box["height"] > 500
         page.screenshot(path=str(OUT / f"{name}-table.png"), full_page=True)
         state = page.evaluate("window.__TRI_ECHO__.state()")
+        assert state["hole"]["r"] >= 30
+        control = page.locator("#cueFace")
+        assert control.is_visible()
+        control_box = control.bounding_box()
+        page.mouse.move(control_box["x"] + control_box["width"] / 2, control_box["y"] + control_box["height"] / 2)
+        page.mouse.down()
+        page.mouse.move(control_box["x"] + control_box["width"] * .78, control_box["y"] + control_box["height"] * .25, steps=4)
+        page.mouse.up()
+        contact_state = page.evaluate("window.__TRI_ECHO__.state()")
+        assert contact_state["contact"]["x"] > .35
+        assert contact_state["contact"]["y"] < -.25
         x = box["x"] + box["width"] * state["cue"]["x"]
         y = box["y"] + box["height"] * state["cue"]["y"]
+        spaces = [
+            (x-box["x"]-20, -1, 0),
+            (box["x"]+box["width"]-x-20, 1, 0),
+            (y-box["y"]-20, 0, -1),
+            (box["y"]+box["height"]-y-20, 0, 1),
+        ]
+        available, dx, dy = max(spaces, key=lambda item: item[0])
+        pull = min(180, available)
         page.mouse.move(x, y)
         page.mouse.down()
-        page.mouse.move(x, min(box["y"] + box["height"] - 20, y + 130), steps=5)
+        page.mouse.move(x+dx*pull, y+dy*pull, steps=5)
+        page.screenshot(path=str(OUT / f"{name}-aim.png"), full_page=True)
         page.mouse.up()
         page.wait_for_timeout(100)
-        assert page.evaluate("window.__TRI_ECHO__.state().active") is True
+        shot_state = page.evaluate("window.__TRI_ECHO__.state()")
+        assert shot_state["active"] is True
+        assert shot_state["maxSpeed"] >= 2400
+        assert shot_state["cueSpeed"] >= 2000, shot_state
+        assert shot_state["contact"]["x"] > .35
         page.wait_for_timeout(200)
         page.screenshot(path=str(OUT / f"{name}-shot.png"), full_page=True)
         assert errors == [], errors
