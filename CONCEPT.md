@@ -1,9 +1,9 @@
 # TRI//ECHO — conceito
 
-**Frase:** A mesa lembra-se das tuas carambolas.
+**Frase:** Emboca. Reconfigura. A mesa lembra-se.
 
-TRI//ECHO transforma a elegância do bilhar de carambola num puzzle arcade vertical de um dedo. A bola branca deve tocar nas bolas dourada e rosa; um sucesso converte o segmento mais legível da trajetória num Echo Rail físico temporário. As jogadas resolvem a mesa e, ao mesmo tempo, redesenham-na.
+TRI//ECHO é um jogo de física vertical inspirado na leitura geométrica do bilhar, mas com uma regra própria: a bola branca impulsiona as bolas dourada e rosa para um portal aberto no interior da mesa. Depois de cada vitória, o portal muda de posição. Uma parte da trajetória vencedora torna-se ainda num Echo Rail físico temporário, pelo que cada solução altera as seguintes.
 
-O gesto de puxar e largar é deliberadamente familiar. A diferenciação está na memória física acumulada, na geração determinística e em sessões sem metajogo predatório. A pesquisa de referência mostrou que jogos mobile de bilhar já usam mira, potência e linhas de previsão; o rail persistente tem portanto função sistémica, não cosmética.
+O controlo principal continua a ser puxar e largar a partir da branca. Um segundo controlo representa a face da bola e escolhe onde o taco bate: em cima dá seguimento, em baixo dá recuo e nas laterais altera o ressalto e o desvio após colisões.
 
-Estilo: vidro escuro, ciano luminoso, âmbar e rosa; formas procedurais, som sintetizado e HUD pequeno. Riscos principais: tunnelling em velocidades altas (mitigado por timestep de 1/120 s e força limitada), geometrias impossíveis (zonas seguras e validação), confusão com rails acumulados (máximo de 2–3) e suspensão mobile (delta limitado e pausa por visibilitychange).
+Estilo: vidro escuro, portal ciano, âmbar e rosa; formas procedurais, som sintetizado e HUD compacto. Riscos principais: capturas ambíguas (resolvidas por funil e limiar explícito), tunnelling em velocidades altas (timestep de 1/180 s e máximo dinâmico), geometrias injustas (zonas seguras determinísticas), excesso de informação (previsão curta e máximo de 2–3 Echo Rails) e gestos concorrentes (áreas de toque independentes).

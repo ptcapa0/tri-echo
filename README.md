@@ -1,6 +1,10 @@
-# TRI//ECHO
+# TRI//ECHO 3
 
-Jogo de física mobile-first, sem backend e sem dependências. Puxa a bola branca, larga e toca nas outras duas. Cada carambola cria um Echo Rail que altera as jogadas seguintes.
+Jogo de física mobile-first, sem backend e sem dependências. Portal Golf conta todas as tacadas até embocar e compara o resultado com o par; Carambola Clássica recupera as regras puristas; Fusion combina carambola e portal. Echo Tour e Daily Golf acrescentam pontuação competitiva discreta e cinco poderes de utilização única.
+
+O controlo circular **IMPACTO** é independente da mira e pode ser arrastado pela pega **MOVER**, libertando qualquer zona importante da mesa. Move o ponto para cima para seguimento, para baixo para recuo ou para os lados para efeito lateral.
+
+A potência adapta-se às dimensões da mesa. Um arrasto máximo garante alcance para pelo menos três comprimentos úteis da mesa mais três diâmetros de bola; o início da curva continua suave para jogadas de precisão.
 
 ## Jogar localmente
 

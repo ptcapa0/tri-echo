@@ -1,12 +1,15 @@
-# Especificação executável
+# Especificação executável — versão 3
 
-- Estados: menu, mira, simulação, resultado, fim de sessão, definições.
-- Regra base: uma jogada é sucesso quando a bola principal toca uma vez em cada bola-alvo. Precision acrescenta ordem ou mínimo de ressaltos.
-- Controlo: pointer down num raio confortável da bola, arrasto inverso para direção/força, libertar dispara, regressar a menos de 24 unidades cancela.
-- Pontuação: 100 × multiplicador (sobe a cada 3 sucessos, máximo 5×) + 15 por ressalto. Falhar quebra a série.
-- Echo Rail: segmento longo da trajetória bem-sucedida, sólido nas jogadas futuras; 2–3 ativos conforme dificuldade; o mais antigo sai primeiro.
-- Modos: Flow (vidas), Zen (sem falha terminal), Precision (duas tentativas + condição), Rush (45 s, +5 s por sucesso), Daily (seed UTC comum à versão).
-- Geração: PRNG Mulberry32, posições com separação mínima, 0–3 bumpers, zona slow/glide opcional; seed por sessão/nível. Validação verifica limites e sobreposições.
-- Dificuldade altera assistência, força, densidade de obstáculos, vidas, margens e limite de rails. Adaptativo usa os últimos 12 resultados sem mostrar punições.
-- Dados: localStorage, JSON exportável; nenhum dado pessoal, rede, conta ou backend.
-- Critério de conclusão: PWA inicia, gesto dispara, física termina com segurança, carambola pontua, tabelas variam, os cinco modos executam as respetivas regras, save restaura e cache permite recarregar offline.
+- Estados: menu, mira, simulação, resultado breve, cartão da volta, fim competitivo e definições.
+- Portal Golf: cada tentativa conta como tacada e não há limite; embocar uma cor conclui o buraco e compara o resultado com o par; a branca no portal é falta e reaparece.
+- Carambola Clássica: não existe portal; a branca deve tocar nas outras duas bolas na mesma tacada.
+- Fusion: primeiro completa a carambola, depois ativa o portal e tenta embocar.
+- Controlos: arrasto inverso para direção/força; controlo circular móvel para seguimento, recuo e efeito lateral.
+- Física: timestep de 1/180 s, atrito exponencial mais resistência de rolamento, restituição consistente, transferência tangencial de spin, atração local do portal e limite seguro de 14 s.
+- Potência: máximo cobre três comprimentos úteis mais três diâmetros; curva exponencial preserva precisão inicial.
+- Pontuação: modos casuais mostram resultado relativo ao par. Echo Tour e Daily Golf usam pontos por desempenho abaixo do par, precisão, ressaltos e série.
+- Poderes competitivos: Traço Longo, Lente, Fase, Forja Echo e Rewind; uma utilização por volta, sem moedas, compras ou aleatoriedade paga.
+- Echo Rails: segmentos de trajetórias relevantes, sólidos em jogadas futuras, 2–3 ativos e remoção FIFO.
+- Geração: Mulberry32, três bolas, portal, bumpers e zona slow/glide; separações mínimas, validação de limites e seeds determinísticas.
+- Dados: localStorage e JSON exportável; sem conta, backend, analytics ou dados pessoais.
+- Conclusão: PWA inicia, controlos não obstruem permanentemente a mesa, os cinco modos executam regras reais, poderes alteram a simulação, save restaura e cache funciona offline.
