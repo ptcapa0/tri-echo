@@ -14,23 +14,73 @@ with sync_playwright() as p:
         page.on("pageerror", lambda err: errors.append(str(err)))
         page.goto(ROOT, wait_until="networkidle")
         assert page.locator("#menu").get_attribute("open") is not None
+        if name == "android":
+            page.locator("#mode").select_option("tour")
         page.locator("#playBtn").click()
         canvas = page.locator("#game")
         box = canvas.bounding_box()
         assert box and box["width"] > 300 and box["height"] > 500
         page.screenshot(path=str(OUT / f"{name}-table.png"), full_page=True)
         state = page.evaluate("window.__TRI_ECHO__.state()")
+        assert state["hole"]["r"] >= 30
+        assert state["strokes"] == 0
+        assert state["par"] >= 2
+        if name == "android":
+            assert page.locator(".power").count() == 5
+            page.locator('[data-power="trace"]').click()
+            assert page.evaluate("window.__TRI_ECHO__.state().activePower") == "trace"
+        control = page.locator("#cueFace")
+        assert control.is_visible()
+        before_move = page.evaluate("window.__TRI_ECHO__.state().controlPos")
+        handle = page.locator("#moveContact")
+        handle_box = handle.bounding_box()
+        page.mouse.move(handle_box["x"] + handle_box["width"] / 2, handle_box["y"] + handle_box["height"] / 2)
+        page.mouse.down()
+        page.mouse.move(box["x"] + 65, box["y"] + box["height"] * .42, steps=5)
+        page.mouse.up()
+        after_move = page.evaluate("window.__TRI_ECHO__.state().controlPos")
+        assert abs(after_move["x"] - before_move["x"]) > .2
+        control_box = control.bounding_box()
+        page.mouse.move(control_box["x"] + control_box["width"] / 2, control_box["y"] + control_box["height"] / 2)
+        page.mouse.down()
+        page.mouse.move(control_box["x"] + control_box["width"] * .78, control_box["y"] + control_box["height"] * .25, steps=4)
+        page.mouse.up()
+        contact_state = page.evaluate("window.__TRI_ECHO__.state()")
+        assert contact_state["contact"]["x"] > .35
+        assert contact_state["contact"]["y"] < -.25
         x = box["x"] + box["width"] * state["cue"]["x"]
         y = box["y"] + box["height"] * state["cue"]["y"]
+        spaces = [
+            (x-box["x"]-20, -1, 0),
+            (box["x"]+box["width"]-x-20, 1, 0),
+            (y-box["y"]-20, 0, -1),
+            (box["y"]+box["height"]-y-20, 0, 1),
+        ]
+        available, dx, dy = max(spaces, key=lambda item: item[0])
+        pull = min(180, available)
         page.mouse.move(x, y)
         page.mouse.down()
-        page.mouse.move(x, min(box["y"] + box["height"] - 20, y + 130), steps=5)
+        page.mouse.move(x+dx*pull, y+dy*pull, steps=5)
+        page.screenshot(path=str(OUT / f"{name}-aim.png"), full_page=True)
         page.mouse.up()
         page.wait_for_timeout(100)
-        assert page.evaluate("window.__TRI_ECHO__.state().active") is True
+        shot_state = page.evaluate("window.__TRI_ECHO__.state()")
+        assert shot_state["active"] is True
+        assert shot_state["maxSpeed"] >= 2400
+        assert shot_state["cueSpeed"] >= 500, shot_state
+        assert shot_state["contact"]["x"] > .35
+        assert shot_state["strokes"] == 1
         page.wait_for_timeout(200)
         page.screenshot(path=str(OUT / f"{name}-shot.png"), full_page=True)
         assert errors == [], errors
+        if name == "desktop":
+            page.locator("#homeBtn").click()
+            page.locator("#mode").select_option("classic")
+            page.locator("#playBtn").click()
+            classic = page.evaluate("window.__TRI_ECHO__.state()")
+            assert classic["mode"] == "classic"
+            assert classic["hole"] is None
+            assert page.locator(".power").count() == 0
         if name == "iphone":
             assert page.evaluate("navigator.serviceWorker.ready.then(() => true)")
             page.context.set_offline(True)
