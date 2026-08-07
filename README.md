@@ -32,3 +32,5 @@ Alternativa: arrasta esta pasta para o painel de deploy manual do Netlify. Não 
 ## Privacidade
 
 Todo o progresso fica no `localStorage` do dispositivo. Não há analytics, cookies de terceiros, API keys, conta ou recolha de dados pessoais. Usa **Definições → Exportar** para criar uma cópia JSON.
+
+<!-- Release TRI//ECHO 3: deployment retriggered after the GitHub Pages incident on 2026-08-06. -->
