@@ -25,14 +25,16 @@ export class Physics{
   this.table=table;this.balls=table.balls;this.time=0;this.path=[];
   this.contacts=new Set();this.contactOrder=[];this.cushions=0;this.active=false;
   this.distanceTravelled=0;this.pocketed=[];this.shotPower=0;this.modifiers={};this.firstCollision=null;
-  for(const b of this.balls){b.pocketed=false;b.spinX=0;b.spinY=0}
+  this.cueCushionsBeforeContact=0;this.objectCushions=0;this.objectContacts=0;
+  for(const b of this.balls){b.pocketed=!!b.pocketed;b.spinX=0;b.spinY=0}
  }
 
  shoot(vx,vy,contact={x:0,y:0},powerRatio=0,modifiers={}){
   const b=this.balls[0];b.vx=vx;b.vy=vy;b.pocketed=false;
   b.spinX=clamp(contact.x,-1,1);b.spinY=clamp(-contact.y,-1,1);
   this.time=0;this.path=[{x:b.x,y:b.y}];this.contacts.clear();this.contactOrder=[];
-  this.cushions=0;this.distanceTravelled=0;this.pocketed=[];this.shotPower=powerRatio;this.modifiers=modifiers;this.firstCollision=null;this.active=true;
+   this.cushions=0;this.cueCushionsBeforeContact=0;this.objectCushions=0;this.objectContacts=0;
+   this.distanceTravelled=0;this.pocketed=[];this.shotPower=powerRatio;this.modifiers=modifiers;this.firstCollision=null;this.active=true;
  }
 
  step(dt=STEP){
@@ -49,6 +51,8 @@ export class Physics{
    b.spinX*=Math.exp(-.62*dt);b.spinY*=Math.exp(-.7*dt);
    const ox=b.x,oy=b.y;b.x+=b.vx*dt;b.y+=b.vy*dt;
    if(b.id===0)this.distanceTravelled+=Math.hypot(b.x-ox,b.y-oy);
+   this.capturePocket(b);
+   if(b.pocketed)continue;
    this.wall(b,bounds);
    if(!this.modifiers.phase)for(const o of this.table.obstacles)this.circleStatic(b,o,.96);
    for(const rail of this.table.rails)this.rail(b,rail);
@@ -58,7 +62,7 @@ export class Physics{
   const cue=this.balls[0],last=this.path[this.path.length-1];
   if(!cue.pocketed&&(!last||Math.hypot(cue.x-last.x,cue.y-last.y)>17))this.path.push({x:cue.x,y:cue.y});
   const live=this.balls.filter(b=>!b.pocketed);
-  if(this.pocketed.length||this.time>14||live.every(b=>len(b.vx,b.vy)<5)){
+  if(this.time>18||live.every(b=>len(b.vx,b.vy)<5)){
    for(const b of live){b.vx=0;b.vy=0}
    this.active=false;return true;
   }
@@ -66,18 +70,16 @@ export class Physics{
  }
 
  pocketPull(b,dt){
-  const h=this.table.hole;if(!h||h.disabled)return;
-  const dx=h.x-b.x,dy=h.y-b.y,d=Math.hypot(dx,dy),reach=h.r+b.r*1.45;
-  if(d>reach||d<.001)return;
-  const strength=(1-d/reach)*1150*(this.modifiers.gravity?1.85:1);
-  b.vx+=dx/d*strength*dt;b.vy+=dy/d*strength*dt;
+  const targets=[...(this.table.pockets||[]),...(this.table.hole&&!this.table.hole.disabled?[this.table.hole]:[])];
+  let h=null,best=Infinity;for(const target of targets){const d=Math.hypot(target.x-b.x,target.y-b.y);if(d<best){best=d;h=target}}
+  if(!h)return;const dx=h.x-b.x,dy=h.y-b.y,d=best,reach=h.r+b.r*1.55;if(d>reach||d<.001)return;
+  const strength=(1-d/reach)*1280*(this.modifiers.gravity?1.85:1);b.vx+=dx/d*strength*dt;b.vy+=dy/d*strength*dt;
  }
 
  capturePocket(b){
-  const h=this.table.hole;if(!h||h.disabled||b.pocketed)return;
-  if(Math.hypot(b.x-h.x,b.y-h.y)<h.r*.72){
-   b.x=h.x;b.y=h.y;b.vx=0;b.vy=0;b.pocketed=true;this.pocketed.push(b.id);
-  }
+  if(b.pocketed)return;const targets=[...(this.table.pockets||[]),...(this.table.hole&&!this.table.hole.disabled?[this.table.hole]:[])];
+  const h=targets.find(x=>Math.hypot(b.x-x.x,b.y-x.y)<x.r*.86);if(!h)return;
+  b.x=h.x;b.y=h.y;b.vx=0;b.vy=0;b.pocketed=true;this.pocketed.push(b.id);
  }
 
  wall(b,z){
@@ -90,7 +92,8 @@ export class Physics{
    if(axis==='v')b.vy+=b.spinX*Math.abs(b.vx)*.16;
    else b.vx-=b.spinX*Math.abs(b.vy)*.16;
    b.spinX*=-.72;
-   if(b.id===0)this.cushions++;
+   if(b.id===0){this.cushions++;if(this.firstCollision===null)this.cueCushionsBeforeContact++}
+   else this.objectCushions++;
   }
  }
 
@@ -112,6 +115,7 @@ export class Physics{
   }
   const id=a.id===0?b.id:b.id===0?a.id:0;
   if(id&&!this.contacts.has(id)){this.contacts.add(id);this.contactOrder.push(id);if(this.firstCollision===null)this.firstCollision=id}
+  if(a.id!==0&&b.id!==0)this.objectContacts++;
  }
 
  circleStatic(b,o,bounce){
