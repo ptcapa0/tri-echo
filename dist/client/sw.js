@@ -1,4 +1,4 @@
-const CACHE='tri-echo-v4.0.0';
+const CACHE='tri-echo-v4.0.1';
 const FILES=[
  './','./index.html','./style.css','./manifest.webmanifest',
  './assets/icon.svg','./assets/icon-192.png','./assets/icon-512.png',
