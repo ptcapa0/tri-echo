@@ -7,10 +7,10 @@ export const MODES={
  american:{label:'Pool americano · 8-ball',kind:'american',competitive:false,tableChoice:false,description:'15 bolas: limpa o teu grupo e termina na bola 8.'},
  british:{label:'Snooker britânico',kind:'british',competitive:false,tableChoice:false,description:'15 vermelhas e seis cores na sequência tradicional.'},
  trick:{label:'Trick Shot',kind:'trick',competitive:true,tableChoice:false,description:'Completa uma jogada artística com o menor número de tentativas.'},
- training:{label:'Treino',kind:'training',competitive:false,tableChoice:false,description:'Treino sem penalização para Table Golf, 3 bolas ou Snooker.'}
+ training:{label:'Treino',kind:'training',competitive:false,tableChoice:false,description:'Pratica Table Golf, 3 bolas, Pool americano ou Snooker sem pressão.'}
 };
 export const TABLE_STYLES={echo:{label:'Mesa Echo · portal móvel'},snooker:{label:'Mesa Snooker · 6 bolsas'}};
-export const TRAINING_DISCIPLINES={golf:'Table Golf',classic:'Bilhar de 3 bolas',snooker:'Snooker'};
+export const TRAINING_DISCIPLINES={golf:'Table Golf',classic:'Bilhar de 3 bolas',american:'Pool americano · regras 8-ball',snooker:'Snooker britânico'};
 export const TRICK_SHOTS=[
  {id:'bank',name:'Tabela vencedora',hint:'Emboca uma bola depois de ela tocar numa tabela.',requirement:'bank'},
  {id:'kick',name:'Kick Shot',hint:'A branca toca numa tabela antes da primeira bola.',requirement:'kick'},
