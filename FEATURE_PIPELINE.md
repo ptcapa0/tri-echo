@@ -1,6 +1,9 @@
 # Pipeline de evolução
 
-## Implementado na versão 3
+## Implementado até à versão 4
+
+- Mesa Snooker opcional com seis bolsas em todos os modos originais.
+- Pool americano 8-ball, snooker britânico, Trick Shot e treino por modalidade.
 
 - **Traço Longo:** previsão ampliada e primeiro ressalto.
 - **Lente Gravitacional:** aumenta a atração do portal durante uma tacada.
