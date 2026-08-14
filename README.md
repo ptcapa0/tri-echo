@@ -1,6 +1,8 @@
-# TRI//ECHO 3
+# TRI//ECHO 4
 
-Jogo de física mobile-first, sem backend e sem dependências. Portal Golf conta todas as tacadas até embocar e compara o resultado com o par; Carambola Clássica recupera as regras puristas; Fusion combina carambola e portal. Echo Tour e Daily Golf acrescentam pontuação competitiva discreta e cinco poderes de utilização única.
+Jogo de física mobile-first, sem backend e sem dependências. **Table Golf** conta todas as tacadas até embocar; **Bilhar de 3 bolas** mantém a carambola clássica; Fusion combina as duas regras. Echo Tour e Daily Golf acrescentam pontuação competitiva e cinco poderes.
+
+Cada modo original pode usar a Mesa Echo com portal móvel ou uma mesa de snooker com seis bolsas. A versão 4 acrescenta ainda pool americano 8-ball com 16 bolas, snooker britânico com 22 bolas, seis desafios Trick Shot e treino contínuo de Table Golf, Bilhar de 3 bolas ou Snooker.
 
 O controlo circular **IMPACTO** é independente da mira e pode ser arrastado pela pega **MOVER**, libertando qualquer zona importante da mesa. Move o ponto para cima para seguimento, para baixo para recuo ou para os lados para efeito lateral.
 
@@ -16,7 +18,7 @@ Em ambientes com botão de pré-visualização, seleciona a pasta `tri-echo` com
 
 O servidor não instala pacotes nem usa dependências externas. Se a porta 8080 estiver ocupada, usa `PORT=8090 npm run dev`.
 
-Testes: `npm test` (apenas Node.js moderno; não instala pacotes).
+Testes: `npm test` (apenas Node.js moderno; não instala pacotes). Playtest: `python3 tests/playtest.py` com o servidor local em execução.
 
 ## Instalar no telemóvel
 
@@ -32,5 +34,3 @@ Alternativa: arrasta esta pasta para o painel de deploy manual do Netlify. Não 
 ## Privacidade
 
 Todo o progresso fica no `localStorage` do dispositivo. Não há analytics, cookies de terceiros, API keys, conta ou recolha de dados pessoais. Usa **Definições → Exportar** para criar uma cópia JSON.
-
-<!-- Release TRI//ECHO 3: deployment retriggered after the GitHub Pages incident on 2026-08-06. -->
