@@ -88,4 +88,40 @@ with sync_playwright() as p:
             assert page.locator("#playBtn").is_visible()
             page.context.set_offline(False)
         page.close()
+    # New v4 modes and table variants
+    page = browser.new_page(viewport={"width": 412, "height": 915})
+    errors = []
+    page.on("console", lambda msg: errors.append(msg.text) if msg.type == "error" else None)
+    page.on("pageerror", lambda err: errors.append(str(err)))
+    page.goto(ROOT, wait_until="networkidle")
+    assert page.locator("#mode option").count() == 9
+    page.locator("#mode").select_option("golf")
+    page.locator("#tableStyle").select_option("snooker")
+    page.locator("#playBtn").click()
+    state = page.evaluate("window.__TRI_ECHO__.state()")
+    assert state["hole"] is None
+    assert state["pockets"] == 6
+    page.locator("#homeBtn").click()
+    for mode, count in [("american", 16), ("british", 22), ("trick", 3)]:
+        page.locator("#mode").select_option(mode)
+        page.locator("#playBtn").click()
+        state = page.evaluate("window.__TRI_ECHO__.state()")
+        assert state["mode"] == mode
+        assert state["balls"] == count
+        assert state["pockets"] == 6
+        page.locator("#homeBtn").click()
+    page.locator("#mode").select_option("trick")
+    assert page.locator("#trickRow").is_visible()
+    page.locator("#trickDiscipline").select_option("american")
+    page.locator("#playBtn").click()
+    assert page.evaluate("window.__TRI_ECHO__.state().balls") == 16
+    page.locator("#homeBtn").click()
+    page.locator("#mode").select_option("training")
+    assert page.locator("#trainingRow").is_visible()
+    page.locator("#trainingDiscipline").select_option("snooker")
+    page.locator("#playBtn").click()
+    assert page.evaluate("window.__TRI_ECHO__.state().balls") == 22
+    page.screenshot(path=str(OUT / "android-v4-snooker.png"), full_page=True)
+    assert errors == [], errors
+    page.close()
     browser.close()
