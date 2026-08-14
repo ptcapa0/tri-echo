@@ -20,8 +20,9 @@ function threeBalls(rng,w,h,margin){
  return balls.length===3?balls:[ball(w*.25,h*.72,0),ball(w*.72,h*.28,1),ball(w*.28,h*.28,2)];
 }
 function americanBalls(w,h){
- const balls=[ball(w*.5,h*.76,0,15,{role:'cue',color:'#efffff'})],r=15,dy=r*1.78,startY=h*.27;let id=1;
- for(let row=0;row<5;row++)for(let col=0;col<=row;col++){const n=id++,x=w*.5+(col-row/2)*r*2.05,y=startY+row*dy;balls.push(ball(x,y,n,r,{number:n,role:n===8?'eight':n<8?'solid':'stripe'}))}
+ const balls=[ball(w*.5,h*.76,0,15,{role:'cue',color:'#efffff'})],r=15,dy=r*1.78,startY=h*.27;
+ const rack=[1,9,2,3,8,10,11,4,12,5,6,13,7,14,15];let index=0;
+ for(let row=0;row<5;row++)for(let col=0;col<=row;col++){const n=rack[index++],x=w*.5+(col-row/2)*r*2.05,y=startY+row*dy;balls.push(ball(x,y,n,r,{number:n,role:n===8?'eight':n<8?'solid':'stripe'}))}
  return balls;
 }
 function britishBalls(w,h){
@@ -34,12 +35,12 @@ function britishBalls(w,h){
 }
 export function generateTable(seed,difficulty='normal',adaptive=0,w=720,h=1120,options={}){
  const rng=mulberry32(seed),base=DIFFICULTY[difficulty]||DIFFICULTY.normal,tier=difficulty==='adaptive'?Math.max(-1,Math.min(2,adaptive)):0;
- const tableStyle=options.tableStyle||'echo',ballSet=options.ballSet||'three',bounds={l:24,r:w-24,t:24,b:h-24};
+ const tableStyle=options.tableStyle||'echo',ballSet=options.ballSet||'three',traditional=!!options.traditional,bounds={l:24,r:w-24,t:24,b:h-24};
  const balls=ballSet==='american'?americanBalls(w,h):ballSet==='british'?britishBalls(w,h):threeBalls(rng,w,h,base.margin);
- const purist=ballSet!=='three',range=base.obstacles,count=purist?0:Math.max(0,Math.floor(range[0]+rng()*(range[1]-range[0]+1)+tier)),obstacles=[];
+ const purist=traditional||ballSet!=='three',range=base.obstacles,count=purist?0:Math.max(0,Math.floor(range[0]+rng()*(range[1]-range[0]+1)+tier)),obstacles=[];
  for(let i=0,tries=0;i<count&&tries++<120;){const p=point(rng,w,h,95),r=26+rng()*20;if(clear(p,balls,obstacles,78)){obstacles.push({...p,r,type:'bumper'});i++}}
  const frictionZone=!purist&&difficulty!=='relaxed'&&rng()>.55?{x:w*(.2+rng()*.35),y:h*(.25+rng()*.35),w:120+rng()*100,h:130+rng()*180,factor:rng()>.5?.62:1.5}:null;
- const table={seed,w,h,balls,obstacles,frictionZone,rails:[],bounds,hole:null,pockets:[],tableStyle,ballSet};
+ const table={seed,w,h,balls,obstacles,frictionZone,rails:[],bounds,hole:null,pockets:[],tableStyle,ballSet,traditional};
  if(tableStyle==='snooker'||purist)table.pockets=sixPockets(bounds,ballSet==='british'?30:33);
  else relocateHole(table,seed^0x9e3779b9,base.pocket);
  return table;
