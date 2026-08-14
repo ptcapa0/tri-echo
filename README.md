@@ -2,7 +2,7 @@
 
 Jogo de física mobile-first, sem backend e sem dependências. **Table Golf** conta todas as tacadas até embocar; **Bilhar de 3 bolas** mantém a carambola clássica; Fusion combina as duas regras. Echo Tour e Daily Golf acrescentam pontuação competitiva e cinco poderes.
 
-Cada modo original pode usar a Mesa Echo com portal móvel ou uma mesa de snooker com seis bolsas. A versão 4 acrescenta ainda pool americano 8-ball com 16 bolas, snooker britânico com 22 bolas, seis desafios Trick Shot e treino contínuo de Table Golf, Bilhar de 3 bolas ou Snooker.
+Cada modo original pode usar a Mesa Echo com portal móvel ou uma mesa de snooker com seis bolsas. A versão 4.1 inclui pool americano 8-ball com lisas e riscadas de leitura imediata, snooker britânico com 22 bolas, seis desafios Trick Shot e treino contínuo de Table Golf, Bilhar de 3 bolas, Pool americano ou Snooker. As disciplinas tradicionais usam pano livre, sem bumpers, zonas artificiais ou Echo Rails.
 
 O controlo circular **IMPACTO** é independente da mira e pode ser arrastado pela pega **MOVER**, libertando qualquer zona importante da mesa. Move o ponto para cima para seguimento, para baixo para recuo ou para os lados para efeito lateral.
 
