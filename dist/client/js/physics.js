@@ -44,9 +44,9 @@ export class Physics{
   for(const b of this.balls){
    if(b.pocketed)continue;
    this.pocketPull(b,dt);
-   let drag=BASE_DRAG;
+   let drag=this.table.traditional?.34:BASE_DRAG;
    if(frictionZone&&b.x>frictionZone.x&&b.x<frictionZone.x+frictionZone.w&&b.y>frictionZone.y&&b.y<frictionZone.y+frictionZone.h)drag*=frictionZone.factor;
-   const speed=len(b.vx,b.vy),rolling=Math.max(0,1-18*dt/Math.max(speed,18));
+   const speed=len(b.vx,b.vy),rollingResistance=this.table.traditional?15:18,rolling=Math.max(0,1-rollingResistance*dt/Math.max(speed,rollingResistance));
    b.vx*=Math.exp(-drag*dt)*rolling;b.vy*=Math.exp(-drag*dt)*rolling;
    b.spinX*=Math.exp(-.62*dt);b.spinY*=Math.exp(-.7*dt);
    const ox=b.x,oy=b.y;b.x+=b.vx*dt;b.y+=b.vy*dt;
@@ -73,7 +73,7 @@ export class Physics{
   const targets=[...(this.table.pockets||[]),...(this.table.hole&&!this.table.hole.disabled?[this.table.hole]:[])];
   let h=null,best=Infinity;for(const target of targets){const d=Math.hypot(target.x-b.x,target.y-b.y);if(d<best){best=d;h=target}}
   if(!h)return;const dx=h.x-b.x,dy=h.y-b.y,d=best,reach=h.r+b.r*1.55;if(d>reach||d<.001)return;
-  const strength=(1-d/reach)*1280*(this.modifiers.gravity?1.85:1);b.vx+=dx/d*strength*dt;b.vy+=dy/d*strength*dt;
+  const strength=(1-d/reach)*(this.table.traditional?980:1280)*(this.modifiers.gravity?1.85:1);b.vx+=dx/d*strength*dt;b.vy+=dy/d*strength*dt;
  }
 
  capturePocket(b){
@@ -89,6 +89,7 @@ export class Physics{
   if(b.y-b.r<z.t){b.y=z.t+b.r;b.vy=Math.abs(b.vy)*.94;axis='h'}
   if(b.y+b.r>z.b){b.y=z.b-b.r;b.vy=-Math.abs(b.vy)*.94;axis='h'}
   if(axis){
+   if(axis==='v')b.vy*=.985;else b.vx*=.985;
    if(axis==='v')b.vy+=b.spinX*Math.abs(b.vx)*.16;
    else b.vx-=b.spinX*Math.abs(b.vy)*.16;
    b.spinX*=-.72;
@@ -112,6 +113,9 @@ export class Physics{
     const target=cue===a?b:a;target.vx-=tx*imp*cue.spinX*.045;target.vy-=ty*imp*cue.spinX*.045;
     cue.spinY*=.44;cue.spinX*=.64;
    }
+   const tx=-ny,ty=nx,relT=(b.vx-a.vx)*tx+(b.vy-a.vy)*ty,jt=relT*.028;
+   a.vx+=jt*tx;a.vy+=jt*ty;b.vx-=jt*tx;b.vy-=jt*ty;
+   a.spinX=clamp(a.spinX+relT*.0007,-1,1);b.spinX=clamp(b.spinX-relT*.0007,-1,1);
   }
   const id=a.id===0?b.id:b.id===0?a.id:0;
   if(id&&!this.contacts.has(id)){this.contacts.add(id);this.contactOrder.push(id);if(this.firstCollision===null)this.firstCollision=id}
