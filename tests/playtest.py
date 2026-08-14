@@ -80,6 +80,9 @@ with sync_playwright() as p:
             classic = page.evaluate("window.__TRI_ECHO__.state()")
             assert classic["mode"] == "classic"
             assert classic["hole"] is None
+            assert classic["obstacles"] == 0
+            assert classic["frictionZone"] is False
+            assert classic["rails"] == 0
             assert page.locator(".power").count() == 0
         if name == "iphone":
             assert page.evaluate("navigator.serviceWorker.ready.then(() => true)")
@@ -109,6 +112,9 @@ with sync_playwright() as p:
         assert state["mode"] == mode
         assert state["balls"] == count
         assert state["pockets"] == 6
+        if mode in ("american", "british"):
+            assert state["obstacles"] == 0
+            assert state["frictionZone"] is False
         page.locator("#homeBtn").click()
     page.locator("#mode").select_option("trick")
     assert page.locator("#trickRow").is_visible()
@@ -118,6 +124,17 @@ with sync_playwright() as p:
     page.locator("#homeBtn").click()
     page.locator("#mode").select_option("training")
     assert page.locator("#trainingRow").is_visible()
+    page.locator("#trainingDiscipline").select_option("american")
+    page.locator("#playBtn").click()
+    american_training = page.evaluate("window.__TRI_ECHO__.state()")
+    assert american_training["balls"] == 16
+    assert american_training["ballSet"] == "american"
+    assert american_training["obstacles"] == 0
+    assert american_training["roles"].count("solid") == 7
+    assert american_training["roles"].count("stripe") == 7
+    page.screenshot(path=str(OUT / "android-v41-pool-training.png"), full_page=True)
+    page.locator("#homeBtn").click()
+    page.locator("#mode").select_option("training")
     page.locator("#trainingDiscipline").select_option("snooker")
     page.locator("#playBtn").click()
     assert page.evaluate("window.__TRI_ECHO__.state().balls") == 22
