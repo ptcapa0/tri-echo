@@ -9,7 +9,10 @@ export function dailySeed(date=new Date()){return hashString(`tri-echo-v4:${date
 const ball=(x,y,id,r=18,extra={})=>({x,y,vx:0,vy:0,r,id,pocketed:false,...extra});
 function point(rng,w,h,margin){return{x:margin+rng()*(w-2*margin),y:margin+rng()*(h-2*margin)}}
 function clear(p,balls,obs,space=54){return balls.every(b=>dist(p,b)>space)&&obs.every(o=>Math.hypot(p.x-o.x,p.y-o.y)>o.r+space)}
-export function sixPockets(bounds,r=31){const {l,r:rr,t,b}=bounds,m=(l+rr)/2;return[{x:l,y:t,r},{x:m,y:t,r:r*.9},{x:rr,y:t,r},{x:l,y:b,r},{x:m,y:b,r:r*.9},{x:rr,y:b,r}]}
+export function sixPockets(bounds,r=31){
+ const {l,r:rr,t,b}=bounds,m=(t+b)/2;
+ return [{x:l,y:t,r},{x:rr,y:t,r},{x:l,y:m,r:r*.9},{x:rr,y:m,r:r*.9},{x:l,y:b,r},{x:rr,y:b,r}];
+}
 
 function threeBalls(rng,w,h,margin){
  const balls=[];let guard=0;
