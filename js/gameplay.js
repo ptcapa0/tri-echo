@@ -39,7 +39,7 @@ export function competitivePoints({strokes,par,streak=0,cushions=0,accuracy=0}){
 export function trickPoints(attempts){return Math.max(100,1200-(attempts-1)*140)}
 export function freshPowerInventory(){return Object.fromEntries(Object.keys(POWERS).map(key=>[key,1]))}
 export function evaluateTrick(trick,physics,contact){
- const coloured=physics.pocketed.some(id=>id>0),carom=physics.contacts.size>=2;
+ const scratch=physics.pocketed.includes(0),coloured=!scratch&&physics.pocketed.some(id=>id>0),carom=!scratch&&physics.contacts.size>=2;
  if(trick.requirement==='bank')return coloured&&physics.objectCushions>0;
  if(trick.requirement==='kick')return coloured&&physics.cueCushionsBeforeContact>0;
  if(trick.requirement==='combo')return coloured&&physics.objectContacts>0;

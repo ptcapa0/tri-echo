@@ -3,7 +3,7 @@ const FILES=[
  './','./index.html','./style.css','./manifest.webmanifest',
  './assets/icon.svg','./assets/icon-192.png','./assets/icon-512.png',
  './js/app.js','./js/audio.js','./js/generator.js','./js/math.js',
- './js/physics.js','./js/storage.js','./js/gameplay.js'
+ './js/physics.js','./js/storage.js','./js/gameplay.js','./js/rules.js'
 ];
 
 self.addEventListener('install',event=>{

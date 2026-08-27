@@ -40,9 +40,10 @@ export function generateTable(seed,difficulty='normal',adaptive=0,w=720,h=1120,o
  const purist=traditional||ballSet!=='three',range=base.obstacles,count=purist?0:Math.max(0,Math.floor(range[0]+rng()*(range[1]-range[0]+1)+tier)),obstacles=[];
  for(let i=0,tries=0;i<count&&tries++<120;){const p=point(rng,w,h,95),r=26+rng()*20;if(clear(p,balls,obstacles,78)){obstacles.push({...p,r,type:'bumper'});i++}}
  const frictionZone=!purist&&difficulty!=='relaxed'&&rng()>.55?{x:w*(.2+rng()*.35),y:h*(.25+rng()*.35),w:120+rng()*100,h:130+rng()*180,factor:rng()>.5?.62:1.5}:null;
- const table={seed,w,h,balls,obstacles,frictionZone,rails:[],bounds,hole:null,pockets:[],tableStyle,ballSet,traditional};
- if(tableStyle==='snooker'||purist)table.pockets=sixPockets(bounds,ballSet==='british'?30:33);
- else relocateHole(table,seed^0x9e3779b9,base.pocket);
+ const targetType=options.targetType||(tableStyle==='snooker'||ballSet!=='three'||purist?'pockets':'portal');
+ const table={seed,w,h,balls,obstacles,frictionZone,rails:[],bounds,hole:null,pockets:[],tableStyle,ballSet,traditional,targetType};
+ if(targetType==='pockets')table.pockets=sixPockets(bounds,ballSet==='british'?30:33);
+ else if(targetType==='portal')relocateHole(table,seed^0x9e3779b9,base.pocket);
  return table;
 }
 export function relocateHole(table,seed,r=table.hole?.r||34){
@@ -56,8 +57,18 @@ export function respawnBall(table,ball,seed){
  for(let tries=0;tries<300;tries++){const p={x:b.l+margin+rng()*(b.r-b.l-margin*2),y:b.t+margin+rng()*(b.b-b.t-margin*2)};if(table.balls.every(other=>other===ball||other.pocketed||dist(p,other)>ball.r+other.r+45)&&table.obstacles.every(o=>dist(p,o)>ball.r+o.r+35)&&safeFromTargets(table,p,ball)){Object.assign(ball,p,{vx:0,vy:0,pocketed:false,spinX:0,spinY:0});return true}}
  Object.assign(ball,{x:b.l+margin,y:b.b-margin,vx:0,vy:0,pocketed:false,spinX:0,spinY:0});return false;
 }
-export function respotBall(table,ball){const p=ball.spot||{x:(table.bounds.l+table.bounds.r)/2,y:(table.bounds.t+table.bounds.b)*.25};Object.assign(ball,p,{vx:0,vy:0,pocketed:false,spinX:0,spinY:0})}
+function legalBallPosition(table,ball,p){
+ const b=table.bounds;if(p.x-ball.r<b.l||p.x+ball.r>b.r||p.y-ball.r<b.t||p.y+ball.r>b.b)return false;
+ return table.balls.every(other=>other===ball||other.pocketed||dist(p,other)>=ball.r+other.r+2)&&table.obstacles.every(o=>dist(p,o)>=ball.r+o.r+8)&&safeFromTargets(table,p,ball);
+}
+export function respotBall(table,ball){
+ const origin=ball.spot||{x:(table.bounds.l+table.bounds.r)/2,y:(table.bounds.t+table.bounds.b)*.25},step=ball.r*2+6;
+ const candidates=[origin];
+ for(let ring=1;ring<=16;ring++)for(let y=-ring;y<=ring;y++)for(let x=-ring;x<=ring;x++)if(Math.max(Math.abs(x),Math.abs(y))===ring)candidates.push({x:origin.x+x*step,y:origin.y+y*step});
+ const p=candidates.find(candidate=>legalBallPosition(table,ball,candidate));if(!p)return false;
+ Object.assign(ball,p,{vx:0,vy:0,pocketed:false,spinX:0,spinY:0});return true;
+}
 export function tableIsValid(table){
- const b=table.bounds,targets=[...(table.pockets||[]),...(table.hole?[table.hole]:[])];if(table.balls.length<3||targets.length===0)return false;
+ const b=table.bounds,targets=[...(table.pockets||[]),...(table.hole?[table.hole]:[])];if(table.balls.length<3||(targets.length===0&&table.targetType!=='none'))return false;
  return table.balls.every((p,i)=>p.x-p.r>=b.l&&p.x+p.r<=b.r&&p.y-p.r>=b.t&&p.y+p.r<=b.b&&table.balls.every((q,j)=>i===j||dist(p,q)>p.r+q.r-1)&&table.obstacles.every(o=>dist(p,o)>p.r+o.r+8));
 }
