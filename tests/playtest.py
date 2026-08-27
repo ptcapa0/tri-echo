@@ -15,6 +15,7 @@ with sync_playwright() as p:
         page.on("pageerror", lambda err: errors.append(str(err)))
         page.goto(ROOT, wait_until="networkidle")
         assert page.locator("#menu").get_attribute("open") is not None
+        assert page.locator("#continueBtn").is_hidden()
         if name == "android":
             page.locator("#mode").select_option("tour")
         page.locator("#playBtn").click()
@@ -76,11 +77,20 @@ with sync_playwright() as p:
         assert errors == [], errors
         if name == "desktop":
             page.locator("#homeBtn").click()
+            assert page.locator("#continueBtn").is_visible()
+            resumable = page.evaluate("window.__TRI_ECHO__.state()")
+            page.locator("#continueBtn").click()
+            resumed = page.evaluate("window.__TRI_ECHO__.state()")
+            for key in ("seed", "score", "strokes", "totalStrokes", "ballState"):
+                assert resumed[key] == resumable[key]
+            page.locator("#homeBtn").click()
             page.locator("#mode").select_option("classic")
             page.locator("#playBtn").click()
             classic = page.evaluate("window.__TRI_ECHO__.state()")
             assert classic["mode"] == "classic"
+            assert classic["balls"] == 3
             assert classic["hole"] is None
+            assert classic["pockets"] == 0
             assert classic["obstacles"] == 0
             assert classic["frictionZone"] is False
             assert classic["rails"] == 0
@@ -105,6 +115,21 @@ with sync_playwright() as p:
     state = page.evaluate("window.__TRI_ECHO__.state()")
     assert state["hole"] is None
     assert state["pockets"] == 6
+    page.locator("#homeBtn").click()
+    page.locator("#mode").select_option("classic")
+    page.locator("#tableStyle").select_option("snooker")
+    page.locator("#playBtn").click()
+    classic_snooker = page.evaluate("window.__TRI_ECHO__.state()")
+    assert classic_snooker["balls"] == 3
+    assert classic_snooker["hole"] is None
+    assert classic_snooker["pockets"] == 6
+    page.locator("#homeBtn").click()
+    page.locator("#mode").select_option("hybrid")
+    page.locator("#tableStyle").select_option("echo")
+    page.locator("#playBtn").click()
+    fusion = page.evaluate("window.__TRI_ECHO__.state()")
+    assert fusion["hybridPhase"] == "carom"
+    assert fusion["hole"] is not None and fusion["hole"]["disabled"] is True
     page.locator("#homeBtn").click()
     for mode, count in [("american", 16), ("british", 22), ("trick", 3)]:
         page.locator("#mode").select_option(mode)
@@ -141,5 +166,62 @@ with sync_playwright() as p:
     assert page.evaluate("window.__TRI_ECHO__.state().balls") == 22
     page.screenshot(path=str(OUT / "android-v4-snooker.png"), full_page=True)
     assert errors == [], errors
+    page.close()
+
+    # Daily configuration is canonical and does not overwrite normal preferences.
+    page = browser.new_page(viewport={"width": 412, "height": 915})
+    page.goto(ROOT, wait_until="networkidle")
+    page.locator("#mode").select_option("golf")
+    page.locator("#difficulty").select_option("relaxed")
+    page.locator("#tableStyle").select_option("snooker")
+    page.locator("#playBtn").click()
+    page.locator("#homeBtn").click()
+    page.locator("#mode").select_option("daily")
+    assert page.locator("#difficultyRow").is_hidden()
+    assert page.locator("#tableStyleRow").is_hidden()
+    page.locator("#playBtn").click()
+    daily_a = page.evaluate("window.__TRI_ECHO__.state()")
+    assert daily_a["difficulty"] == "normal"
+    assert daily_a["tableStyle"] == "echo"
+    page.locator("#homeBtn").click()
+    page.locator("#mode").select_option("golf")
+    page.locator("#difficulty").select_option("hard")
+    page.locator("#tableStyle").select_option("echo")
+    page.locator("#playBtn").click()
+    page.locator("#homeBtn").click()
+    page.locator("#mode").select_option("daily")
+    page.locator("#playBtn").click()
+    daily_b = page.evaluate("window.__TRI_ECHO__.state()")
+    for key in ("seed", "difficulty", "tableStyle", "ballState"):
+        assert daily_b[key] == daily_a[key]
+    page.close()
+
+    # Pointer cancellation cannot fire a phantom shot and the next drag still works.
+    page = browser.new_page(viewport={"width": 412, "height": 915})
+    page.goto(ROOT, wait_until="networkidle")
+    page.locator("#playBtn").click()
+    box = page.locator("#game").bounding_box()
+    state = page.evaluate("window.__TRI_ECHO__.state()")
+    x = box["x"] + box["width"] * state["cue"]["x"]
+    y = box["y"] + box["height"] * state["cue"]["y"]
+    page.dispatch_event("#game", "pointerdown", {"pointerId": 77, "clientX": x, "clientY": y})
+    page.dispatch_event("#game", "pointermove", {"pointerId": 77, "clientX": x + 120, "clientY": y})
+    page.dispatch_event("#game", "pointercancel", {"pointerId": 77, "clientX": x + 120, "clientY": y})
+    assert page.evaluate("window.__TRI_ECHO__.state().strokes") == 0
+    page.mouse.move(x, y)
+    page.mouse.down()
+    page.mouse.move(x + 150, y, steps=5)
+    page.mouse.up()
+    page.wait_for_function("window.__TRI_ECHO__.state().strokes === 1")
+    assert page.evaluate("window.__TRI_ECHO__.state().strokes") == 1
+    page.close()
+
+    # Persisted sound=false is effective immediately after reload.
+    page = browser.new_page(viewport={"width": 390, "height": 844})
+    page.goto(ROOT, wait_until="networkidle")
+    page.evaluate("localStorage.setItem('triEchoSaveV1', JSON.stringify({settings:{sound:false}}))")
+    page.reload(wait_until="networkidle")
+    page.locator("#playBtn").click()
+    assert page.evaluate("window.__TRI_ECHO__.state().soundEnabled") is False
     page.close()
     browser.close()

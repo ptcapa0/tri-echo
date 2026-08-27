@@ -1,17 +1,19 @@
 import {clamp,len} from './math.js';
-import {generateTable,respawnBall,respotBall,dailySeed,DIFFICULTY} from './generator.js';
+import {generateTable,respawnBall,respotBall,DIFFICULTY} from './generator.js';
 import {Physics,STEP,echoFromPath,shotMetrics,powerFromPull} from './physics.js';
 import {MODES,TABLE_STYLES,TRAINING_DISCIPLINES,TRICK_SHOTS,POWERS,parForTable,golfTerm,competitivePoints,trickPoints,freshPowerInventory,evaluateTrick} from './gameplay.js';
 import {loadSave,save,exportSave,importSave} from './storage.js';
 import {AudioFX} from './audio.js';
+import {applySoundSetting,dailyChallengeConfig,deriveShotResult,fusionCaromSucceeded,restoreRuleState,shouldCreateEchoRail,snapshotRuleState} from './rules.js';
 
 const $=s=>document.querySelector(s),canvas=$('#game'),ctx=canvas.getContext('2d',{alpha:false}),audio=new AudioFX();
 let data=loadSave(),game=null,acc=0,last=performance.now(),drag=null,particles=[],toastTimer,paused=true;
 let contact={x:0,y:0},contactPointer=null,movePointer=null,controlPos=data.settings.contactPos||{x:.76,y:.02};
+applySoundSetting(audio,data.settings);
 
 class Game{
- constructor(){this.mode=data.mode in MODES?data.mode:'golf';this.info=MODES[this.mode];this.difficulty=data.difficulty;this.tableStyle=this.info.tableChoice?(data.tableStyle||'echo'):'snooker';this.trainingDiscipline=data.trainingDiscipline||'golf';this.trickDiscipline=data.trickDiscipline||'golf';this.seedBase=this.mode==='daily'?dailySeed():Date.now()>>>0;this.holeIndex=0;this.strokes=0;this.totalStrokes=0;this.totalPar=0;this.score=0;this.streak=0;this.results=[];this.inventory=freshPowerInventory();this.activePower=null;this.ruleState={phase:'open',reds:15,colourIndex:0};this.newHole()}
- adaptive(){const r=data.stats.recent||[],rate=r.length?r.filter(Boolean).length/r.length:.5;return rate>.72?2:rate<.34?-1:0}
+ constructor(){this.mode=data.mode in MODES?data.mode:'golf';this.info=MODES[this.mode];const daily=this.mode==='daily'?dailyChallengeConfig():null;this.difficulty=daily?.difficulty||data.difficulty;this.tableStyle=daily?.tableStyle||(this.info.tableChoice?(data.tableStyle||'echo'):'snooker');this.trainingDiscipline=data.trainingDiscipline||'golf';this.trickDiscipline=data.trickDiscipline||'golf';this.seedBase=daily?.seed??Date.now()>>>0;this.holeIndex=0;this.strokes=0;this.totalStrokes=0;this.totalPar=0;this.score=0;this.streak=0;this.results=[];this.inventory=freshPowerInventory();this.activePower=null;this.ruleState={phase:'open',reds:15,colourIndex:0};this.finished=false;this.newHole()}
+ adaptive(){if(this.mode==='daily')return 0;const r=data.stats.recent||[],rate=r.length?r.filter(Boolean).length/r.length:.5;return rate>.72?2:rate<.34?-1:0}
  cueSportKind(){return this.info.kind==='american'||(this.info.kind==='training'&&this.trainingDiscipline==='american')?'american':this.info.kind==='british'||(this.info.kind==='training'&&this.trainingDiscipline==='snooker')?'british':null}
  isTraditional(){return this.info.kind==='classic'||this.info.kind==='american'||this.info.kind==='british'||(this.info.kind==='training'&&this.trainingDiscipline!=='golf')}
  newHole(){
@@ -20,12 +22,12 @@ class Game{
   let ballSet=this.info.kind==='american'?'american':this.info.kind==='british'?'british':'three',tableStyle=this.tableStyle;
   if(this.info.kind==='trick'){tableStyle='snooker';ballSet=this.trickDiscipline==='american'?'american':this.trickDiscipline==='british'?'british':'three'}
   if(this.info.kind==='training'){tableStyle=this.trainingDiscipline==='golf'?'echo':'snooker';ballSet=this.trainingDiscipline==='american'?'american':this.trainingDiscipline==='snooker'?'british':'three'}
-  this.table=generateTable(seed,this.difficulty,this.adaptive(),dims.w,dims.h,{tableStyle,ballSet,traditional:this.isTraditional()});this.table.rails=echoes;
+  const targetType=this.info.kind==='classic'?(tableStyle==='snooker'?'pockets':'none'):undefined;
+  this.table=generateTable(seed,this.difficulty,this.adaptive(),dims.w,dims.h,{tableStyle,ballSet,traditional:this.isTraditional(),targetType});this.table.rails=echoes;
   if(this.cueSportKind()==='american')this.ruleState={group:null,phase:'open'};
   if(this.cueSportKind()==='british')this.ruleState={phase:'red',colourIndex:0};
-  if(this.info.kind==='classic'&&tableStyle==='echo')this.table.hole=null;
   this.trick=this.info.kind==='trick'?TRICK_SHOTS[this.holeIndex%TRICK_SHOTS.length]:null;
-  this.hybridPhase=this.info.kind==='hybrid'?'carom':null;if(this.info.kind==='hybrid'&&this.table.hole)this.table.hole.disabled=true;this.par=this.info.kind==='classic'?1:parForTable(this.table,this.difficulty);this.strokes=0;
+  this.hybridPhase=this.info.kind==='hybrid'?'carom':null;if(this.info.kind==='hybrid'&&this.table.hole)this.table.hole.disabled=true;this.par=this.info.kind==='classic'?1:parForTable(this.table,this.difficulty);this.strokes=0;this.ruleStateStart=snapshotRuleState(this.ruleState,this.hybridPhase);
   this.shotProfile=shotMetrics(this.table,DIFFICULTY[this.difficulty].powerScale);this.physics=new Physics(this.table);this.holeStart=structuredClone(this.table);this.activePower=null;renderPowers();updateHUD();
  }
  shoot(vx,vy,powerRatio){
@@ -33,22 +35,22 @@ class Game{
   const modifiers={gravity:this.activePower==='gravity',phase:this.activePower==='phase'};this.physics.shoot(vx,vy,contact,powerRatio,modifiers);save(data);updateHUD();
  }
   finish(){
-  const sunk=this.physics.pocketed[0]??null,scratch=sunk===0,carom=this.physics.contacts.size===2;
-  const forged=this.activePower==='forge';if(!this.isTraditional()&&(forged||carom||(!scratch&&sunk))){const rail=echoFromPath(this.physics.path);if(rail){this.table.rails.push(rail);while(this.table.rails.length>DIFFICULTY[this.difficulty].rails)this.table.rails.shift()}}
+  const result=deriveShotResult(this.physics),{cuePocketed:scratch,carom}=result;
+  const forged=this.activePower==='forge';if(!this.isTraditional()&&shouldCreateEchoRail(result,{forged})){const rail=echoFromPath(this.physics.path);if(rail){this.table.rails.push(rail);while(this.table.rails.length>DIFFICULTY[this.difficulty].rails)this.table.rails.shift()}}
   if(this.activePower&&this.activePower!=='rewind'){this.inventory[this.activePower]=0;this.activePower=null;renderPowers()}
   if(this.cueSportKind())return this.finishCueSport(scratch,this.cueSportKind());
   if(this.info.kind==='trick')return this.finishTrick();
-  if(this.info.kind==='training')return this.finishTraining(scratch,carom);
-  if(this.info.kind==='classic')return this.finishClassic(carom);
+  if(this.info.kind==='training')return this.finishTraining(result);
+  if(this.info.kind==='classic')return this.finishClassic(result);
   if(this.info.kind==='hybrid'&&this.hybridPhase==='carom'){
-   if(carom){this.hybridPhase='pocket';if(this.table.hole)this.table.hole.disabled=false;this.streak++;audio.success();buzz([15,25,15]);showToast('FASE 2 · BOLSA');this.safeReset(sunk)}
-   else this.handleMiss(sunk,'FALTA CARAMBOLA');return;
+   if(fusionCaromSucceeded(result)){this.hybridPhase='pocket';if(this.table.hole)this.table.hole.disabled=false;this.streak++;audio.success();buzz([15,25,15]);showToast('FASE 2 · BOLSA');this.safeReset(result.pocketedIds)}
+   else this.handleMiss(result.pocketedIds,scratch?'FALTA · BRANCA':'FALTA CARAMBOLA');return;
   }
-  if(!scratch&&sunk>0)return this.completeHole();
-  this.handleMiss(sunk,scratch?'FALTA · BRANCA':'CONTINUA');
+  if(!scratch&&result.objectPocketedIds.length)return this.completeHole();
+  this.handleMiss(result.pocketedIds,scratch?'FALTA · BRANCA':'CONTINUA');
  }
- finishTraining(scratch,carom){
-  const success=this.trainingDiscipline==='classic'?carom:this.physics.pocketed.some(id=>id>0);
+ finishTraining(result){
+  const scratch=result.cuePocketed,success=this.trainingDiscipline==='classic'?result.carom&&!scratch:result.objectPocketedIds.length>0&&!scratch;
   if(success){this.score++;audio.success();showToast('CERTO · CONTINUA A TREINAR')}else showToast(scratch?'BRANCA · REPÕE':'AJUSTA E REPETE');
   for(const id of this.physics.pocketed){const b=this.table.balls.find(x=>x.id===id);if(b)respawnBall(this.table,b,this.seedBase+this.totalStrokes*71+id)}
   this.safeReset(null);updateHUD();
@@ -83,8 +85,8 @@ class Game{
   }
   this.safeReset(null);updateHUD();
  }
- finishClassic(ok){
-  record(ok);if(ok){this.streak++;this.score++;audio.success();buzz([18,30,18]);showToast(`3 BOLAS ×${this.streak}`);this.holeIndex++;setTimeout(()=>this.newHole(),500)}else this.handleMiss(null,'TENTA OUTRA LINHA');
+ finishClassic(result){
+  const ok=result.carom&&!result.cuePocketed;if(ok){record(true);this.streak++;this.score++;audio.success();buzz([18,30,18]);showToast(`3 BOLAS ×${this.streak}`);this.holeIndex++;setTimeout(()=>this.newHole(),500)}else this.handleMiss(result.pocketedIds,result.cuePocketed?'FALTA · BRANCA':'TENTA OUTRA LINHA');
  }
  completeHole(){
   const term=golfTerm(this.strokes,this.par),delta=this.strokes-this.par;this.totalPar+=this.par;this.results.push({strokes:this.strokes,par:this.par,term});record(true);
@@ -97,8 +99,8 @@ class Game{
   record(false);if(this.inventory.rewind&&this.activePower==='rewind'){this.inventory.rewind=0;this.activePower=null;this.strokes--;this.totalStrokes--;this.table=structuredClone(this.preShot);this.physics=new Physics(this.table);showToast('REWIND · TACADA ANULADA');renderPowers();updateHUD();return}
   audio.fail();buzz(22);showToast(label);this.safeReset(sunk);
  }
- safeReset(sunk){setTimeout(()=>{if(sunk!==null)respawnBall(this.table,this.table.balls[sunk],(this.seedBase+this.totalStrokes*3571+sunk)>>>0);for(const b of this.table.balls){b.vx=b.vy=0;b.spinX=b.spinY=0}this.physics=new Physics(this.table);updateHUD()},data.settings.reducedMotion?0:260)}
- restartHole(){this.totalStrokes-=this.strokes;this.strokes=0;this.table=structuredClone(this.holeStart);if(this.info.kind==='classic')this.table.hole=null;this.hybridPhase=this.info.kind==='hybrid'?'carom':null;this.physics=new Physics(this.table);updateHUD();showToast('BURACO REINICIADO')}
+ safeReset(pocketedIds=[]){setTimeout(()=>{for(const id of [...new Set(Array.isArray(pocketedIds)?pocketedIds:pocketedIds==null?[]:[pocketedIds])]){const ball=this.table.balls.find(b=>b.id===id);if(ball)respawnBall(this.table,ball,(this.seedBase+this.totalStrokes*3571+id)>>>0)}for(const b of this.table.balls){b.vx=b.vy=0;b.spinX=b.spinY=0}this.physics=new Physics(this.table);updateHUD()},data.settings.reducedMotion?0:260)}
+ restartHole(){this.totalStrokes-=this.strokes;this.strokes=0;this.table=structuredClone(this.holeStart);const restored=restoreRuleState(this.ruleStateStart);this.ruleState=restored.ruleState;this.hybridPhase=restored.hybridPhase;this.physics=new Physics(this.table);updateHUD();showToast('BURACO REINICIADO')}
 }
 
 function record(ok){data.stats.successes+=ok?1:0;data.stats.recent=[...(data.stats.recent||[]),ok].slice(-12);if(game.mode==='daily'&&ok){const d=new Date().toISOString().slice(0,10);if(!data.dailies.includes(d))data.dailies.push(d)}save(data)}
@@ -117,6 +119,10 @@ function updateContactUI(){const travel=$('#cueFace').clientWidth*.44;$('#contac
 function moveControlDown(e){if(!game||paused)return;e.preventDefault();e.stopPropagation();movePointer=e.pointerId;$('#moveContact').setPointerCapture(e.pointerId)}
 function moveControl(e){if(e.pointerId!==movePointer)return;const stage=$('#stage').getBoundingClientRect(),box=$('#contactControl').getBoundingClientRect();controlPos={x:clamp((e.clientX-stage.left-box.width/2)/(stage.width-box.width),0,1),y:clamp((e.clientY-stage.top-box.height/2)/(stage.height-box.height),0,1)};placeContact()}
 function moveControlUp(e){if(e.pointerId!==movePointer)return;movePointer=null;data.settings.contactPos=controlPos;save(data)}
+function cancelActivePointers(){
+ for(const [element,id] of [[canvas,drag?.id],[$('#cueFace'),contactPointer],[$('#moveContact'),movePointer]])if(id!=null)try{if(element.hasPointerCapture(id))element.releasePointerCapture(id)}catch{}
+ drag=null;contactPointer=null;movePointer=null;
+}
 function placeContact(){const stage=$('#stage'),control=$('#contactControl');if(!stage||!control)return;const x=controlPos.x*Math.max(0,stage.clientWidth-control.offsetWidth),y=controlPos.y*Math.max(0,stage.clientHeight-control.offsetHeight);control.style.left=`${x}px`;control.style.top=`${y}px`}
 function coach(n){const t=['','APONTAR + FORÇA','IMPACTO MÓVEL','JOGA AO PAR'],d=['','Puxa a partir da branca','Ajusta o efeito; usa MOVER para libertar a mesa','Cada tentativa conta como uma tacada'];$('#coachTitle').textContent=t[n];$('#coachText').textContent=d[n];$('#tutorial').classList.remove('hidden')}
 
@@ -150,12 +156,15 @@ function updateHUD(){if(!game)return;const kind=game.info.kind,cueKind=game.cueS
  if(kind==='classic'){$('#scoreLabel').textContent='3 BOLAS';$('#score').textContent=game.score;$('#streakLabel').textContent='SÉRIE';$('#streak').textContent=game.streak;$('#statusLabel').textContent='TACADAS';$('#status').textContent=game.totalStrokes;$('#objective').textContent='A BRANCA TOCA NAS DUAS BOLAS';return}
  $('#scoreLabel').textContent=game.info.competitive?'PONTOS':'RESULTADO';$('#score').textContent=game.info.competitive?game.score:formatDelta(game.score);$('#streakLabel').textContent='TACADAS';$('#streak').textContent=game.strokes;$('#statusLabel').textContent='PAR';$('#status').textContent=game.par;$('#objective').textContent=game.hybridPhase==='carom'?'FASE 1 · BILHAR DE 3 BOLAS':`OBJETIVO ${game.holeIndex+1} · EMBOCA UMA COR`}
 function formatDelta(n){return n===0?'E':n>0?`+${n}`:String(n)}
-function start(){data.mode=$('#mode').value;data.difficulty=$('#difficulty').value;data.tableStyle=$('#tableStyle').value;data.trainingDiscipline=$('#trainingDiscipline').value;data.trickDiscipline=$('#trickDiscipline').value;save(data);contact={x:0,y:0};game=new Game();renderPowers();updateHUD();updateContactUI();placeContact();$('#contactControl').classList.remove('hidden');$('#menu').close();paused=false;if(!data.tutorial)coach(1)}
-function endGame(){if(!game)return;data.best[game.mode]=Math.max(data.best[game.mode]||0,game.score);data.bestStreak=Math.max(data.bestStreak,game.streak);save(data);showToast(`VOLTA · ${game.score} PONTOS`);setTimeout(()=>{$('#menu').showModal();paused=true},800)}
-function openSettings(){paused=true;$('#sound').checked=data.settings.sound;$('#haptics').checked=data.settings.haptics;$('#reduced').checked=data.settings.reducedMotion;$('#settings').showModal()}
+function updateContinue(){const resumable=!!game&&!game.finished;$('#continueBtn').classList.toggle('hidden',!resumable)}
+function start(){cancelActivePointers();data.mode=$('#mode').value;if(data.mode!=='daily'){data.difficulty=$('#difficulty').value;data.tableStyle=$('#tableStyle').value}data.trainingDiscipline=$('#trainingDiscipline').value;data.trickDiscipline=$('#trickDiscipline').value;save(data);contact={x:0,y:0};game=new Game();renderPowers();updateHUD();updateContactUI();placeContact();$('#contactControl').classList.remove('hidden');$('#menu').close();paused=false;updateContinue();if(!data.tutorial)coach(1)}
+function continueGame(){if(!game||game.finished)return;cancelActivePointers();$('#menu').close();paused=false}
+function openMenu(){cancelActivePointers();paused=true;updateContinue();if(!$('#menu').open)$('#menu').showModal()}
+function endGame(){if(!game)return;game.finished=true;data.best[game.mode]=Math.max(data.best[game.mode]||0,game.score);data.bestStreak=Math.max(data.bestStreak,game.streak);save(data);showToast(`VOLTA · ${game.score} PONTOS`);setTimeout(openMenu,800)}
+function openSettings(){cancelActivePointers();paused=true;$('#sound').checked=data.settings.sound;$('#haptics').checked=data.settings.haptics;$('#reduced').checked=data.settings.reducedMotion;if(!$('#settings').open)$('#settings').showModal()}
 
-canvas.addEventListener('pointerdown',down);canvas.addEventListener('pointermove',move);canvas.addEventListener('pointerup',up);canvas.addEventListener('pointercancel',()=>drag=null);$('#cueFace').addEventListener('pointerdown',contactDown);$('#cueFace').addEventListener('pointermove',contactMove);$('#cueFace').addEventListener('pointerup',contactUp);$('#moveContact').addEventListener('pointerdown',moveControlDown);$('#moveContact').addEventListener('pointermove',moveControl);$('#moveContact').addEventListener('pointerup',moveControlUp);window.addEventListener('resize',resize);
-$('#playBtn').onclick=start;$('#settingsBtn').onclick=openSettings;$('#openSettings').onclick=openSettings;$('#homeBtn').onclick=()=>{paused=true;$('#menu').showModal()};$('#retryBtn').onclick=()=>game&&!game.physics.active&&game.restartHole();for(const b of document.querySelectorAll('dialog .close'))b.onclick=()=>{b.closest('dialog').close();paused=$('#menu').open};
-$('#mode').innerHTML=Object.entries(MODES).map(([key,m])=>`<option value="${key}">${m.label}</option>`).join('');$('#mode').value=data.mode in MODES?data.mode:'golf';$('#difficulty').value=data.difficulty;$('#tableStyle').value=data.tableStyle||'echo';$('#trainingDiscipline').value=data.trainingDiscipline||'golf';$('#trickDiscipline').value=data.trickDiscipline||'golf';function modeCopy(){const m=MODES[$('#mode').value];$('#modeDescription').textContent=m.description;$('#tableStyleRow').classList.toggle('hidden',!m.tableChoice);$('#trainingRow').classList.toggle('hidden',m.kind!=='training');$('#trickRow').classList.toggle('hidden',m.kind!=='trick')}$('#mode').onchange=modeCopy;modeCopy();
-$('#progressBtn').onclick=()=>{const a=data.achievements.map(x=>`✓ ${x.id}`).join('<br>')||'Ainda sem conquistas';$('#stats').innerHTML=`Tacadas: ${data.stats.shots}<br>Objetivos: ${data.stats.successes}<br>Melhor série: ${data.bestStreak}<hr>${a}`;$('#progress').showModal()};$('#tutorialBtn').onclick=()=>{data.tutorial=false;save(data);$('#settings').close();paused=false;coach(1)};$('#sound').onchange=e=>{data.settings.sound=e.target.checked;audio.enabled=e.target.checked;save(data)};$('#haptics').onchange=e=>{data.settings.haptics=e.target.checked;save(data)};$('#reduced').onchange=e=>{data.settings.reducedMotion=e.target.checked;save(data)};$('#exportBtn').onclick=()=>{const u=URL.createObjectURL(exportSave(data)),a=document.createElement('a');a.href=u;a.download='tri-echo-progress.json';a.click();URL.revokeObjectURL(u)};$('#importFile').onchange=async e=>{try{data=await importSave(e.target.files[0]);save(data);showToast('PROGRESSO IMPORTADO')}catch{showToast('FICHEIRO INVÁLIDO')}};
-window.__TRI_ECHO__={state:()=>game&&({mode:game.mode,tableStyle:game.table.tableStyle,ballSet:game.table.ballSet,traditional:game.table.traditional,balls:game.table.balls.length,roles:game.table.balls.map(b=>b.role),obstacles:game.table.obstacles.length,frictionZone:!!game.table.frictionZone,pockets:game.table.pockets?.length||0,trick:game.trick?.id||null,active:game.physics.active,score:game.score,strokes:game.strokes,par:game.par,hybridPhase:game.hybridPhase,cue:{x:game.table.balls[0].x/game.table.w,y:game.table.balls[0].y/game.table.h},hole:game.table.hole&&{x:game.table.hole.x/game.table.w,y:game.table.hole.y/game.table.h,r:game.table.hole.r},contact:{...contact},controlPos:{...controlPos},activePower:game.activePower,inventory:{...game.inventory},cueSpeed:len(game.table.balls[0].vx,game.table.balls[0].vy),maxSpeed:game.shotProfile.maxSpeed,cushions:game.physics.cushions,contacts:game.physics.contacts.size,pocketed:[...game.physics.pocketed],rails:game.table.rails.length})};document.addEventListener('visibilitychange',()=>paused=document.hidden||$('#menu').open||$('#settings').open||$('#progress').open);if('serviceWorker'in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js'));resize();updateContactUI();$('#menu').showModal();requestAnimationFrame(loop);
+canvas.addEventListener('pointerdown',down);canvas.addEventListener('pointermove',move);canvas.addEventListener('pointerup',up);canvas.addEventListener('pointercancel',cancelActivePointers);canvas.addEventListener('lostpointercapture',cancelActivePointers);$('#cueFace').addEventListener('pointerdown',contactDown);$('#cueFace').addEventListener('pointermove',contactMove);$('#cueFace').addEventListener('pointerup',contactUp);$('#cueFace').addEventListener('pointercancel',cancelActivePointers);$('#cueFace').addEventListener('lostpointercapture',cancelActivePointers);$('#moveContact').addEventListener('pointerdown',moveControlDown);$('#moveContact').addEventListener('pointermove',moveControl);$('#moveContact').addEventListener('pointerup',moveControlUp);$('#moveContact').addEventListener('pointercancel',cancelActivePointers);$('#moveContact').addEventListener('lostpointercapture',cancelActivePointers);window.addEventListener('resize',resize);
+$('#playBtn').onclick=start;$('#continueBtn').onclick=continueGame;$('#settingsBtn').onclick=openSettings;$('#openSettings').onclick=openSettings;$('#homeBtn').onclick=openMenu;$('#retryBtn').onclick=()=>game&&!game.physics.active&&game.restartHole();for(const b of document.querySelectorAll('dialog .close'))b.onclick=()=>{b.closest('dialog').close();paused=!game||$('#menu').open||$('#settings').open||$('#progress').open};
+$('#mode').innerHTML=Object.entries(MODES).map(([key,m])=>`<option value="${key}">${m.label}</option>`).join('');$('#mode').value=data.mode in MODES?data.mode:'golf';$('#difficulty').value=data.difficulty;$('#tableStyle').value=data.tableStyle||'echo';$('#trainingDiscipline').value=data.trainingDiscipline||'golf';$('#trickDiscipline').value=data.trickDiscipline||'golf';function modeCopy(){const daily=$('#mode').value==='daily',m=MODES[$('#mode').value];$('#modeDescription').textContent=daily?'A mesma volta diária para todos · Normal · Mesa Echo.':m.description;$('#tableStyleRow').classList.toggle('hidden',!m.tableChoice||daily);$('#difficultyRow').classList.toggle('hidden',daily);$('#trainingRow').classList.toggle('hidden',m.kind!=='training');$('#trickRow').classList.toggle('hidden',m.kind!=='trick')}$('#mode').onchange=modeCopy;modeCopy();
+$('#progressBtn').onclick=()=>{cancelActivePointers();paused=true;const a=data.achievements.map(x=>`✓ ${x.id}`).join('<br>')||'Ainda sem conquistas';$('#stats').innerHTML=`Tacadas: ${data.stats.shots}<br>Objetivos: ${data.stats.successes}<br>Melhor série: ${data.bestStreak}<hr>${a}`;$('#progress').showModal()};$('#tutorialBtn').onclick=()=>{data.tutorial=false;save(data);$('#settings').close();paused=!game||$('#menu').open;coach(1)};$('#sound').onchange=e=>{data.settings.sound=e.target.checked;applySoundSetting(audio,data.settings);save(data)};$('#haptics').onchange=e=>{data.settings.haptics=e.target.checked;save(data)};$('#reduced').onchange=e=>{data.settings.reducedMotion=e.target.checked;save(data)};$('#exportBtn').onclick=()=>{const u=URL.createObjectURL(exportSave(data)),a=document.createElement('a');a.href=u;a.download='tri-echo-progress.json';a.click();URL.revokeObjectURL(u)};$('#importFile').onchange=async e=>{try{data=await importSave(e.target.files[0]);applySoundSetting(audio,data.settings);save(data);showToast('PROGRESSO IMPORTADO')}catch{showToast('FICHEIRO INVÁLIDO')}};
+window.__TRI_ECHO__={state:()=>game&&({mode:game.mode,difficulty:game.difficulty,seed:game.seedBase,tableStyle:game.table.tableStyle,ballSet:game.table.ballSet,traditional:game.table.traditional,balls:game.table.balls.length,ballState:game.table.balls.map(b=>({id:b.id,x:b.x,y:b.y,pocketed:b.pocketed})),roles:game.table.balls.map(b=>b.role),obstacles:game.table.obstacles.length,frictionZone:!!game.table.frictionZone,pockets:game.table.pockets?.length||0,trick:game.trick?.id||null,active:game.physics.active,score:game.score,strokes:game.strokes,totalStrokes:game.totalStrokes,par:game.par,hybridPhase:game.hybridPhase,ruleState:structuredClone(game.ruleState),finished:game.finished,cue:{x:game.table.balls[0].x/game.table.w,y:game.table.balls[0].y/game.table.h},hole:game.table.hole&&{x:game.table.hole.x/game.table.w,y:game.table.hole.y/game.table.h,r:game.table.hole.r,disabled:!!game.table.hole.disabled},contact:{...contact},controlPos:{...controlPos},activePower:game.activePower,inventory:{...game.inventory},soundEnabled:audio.enabled,cueSpeed:len(game.table.balls[0].vx,game.table.balls[0].vy),maxSpeed:game.shotProfile.maxSpeed,cushions:game.physics.cushions,contacts:game.physics.contacts.size,pocketed:[...game.physics.pocketed],rails:game.table.rails.length})};document.addEventListener('visibilitychange',()=>{if(document.hidden)cancelActivePointers();paused=document.hidden||$('#menu').open||$('#settings').open||$('#progress').open});if('serviceWorker'in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js'));resize();updateContactUI();updateContinue();$('#menu').showModal();requestAnimationFrame(loop);

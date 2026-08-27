@@ -14,6 +14,7 @@
 - Física: timestep de 1/180 s, atrito exponencial mais resistência de rolamento, restituição consistente, transferência tangencial de spin, atração local do portal e limite seguro de 14 s.
 - Potência: máximo cobre três comprimentos úteis mais três diâmetros; curva exponencial preserva precisão inicial.
 - Pontuação: modos casuais mostram resultado relativo ao par. Echo Tour e Daily Golf usam pontos por desempenho abaixo do par, precisão, ressaltos e série.
+- Daily Golf: seed diário UTC, dimensões virtuais 720 × 1120 e configuração canónica igual para todos (`normal`, Mesa Echo, adaptive 0), sem depender de preferências ou histórico locais.
 - Poderes competitivos: Traço Longo, Lente, Fase, Forja Echo e Rewind; uma utilização por volta, sem moedas, compras ou aleatoriedade paga.
 - Echo Rails: segmentos de trajetórias relevantes, sólidos em jogadas futuras, 2–3 ativos e remoção FIFO.
 - Geração: Mulberry32, três bolas, portal, bumpers e zona slow/glide; separações mínimas, validação de limites e seeds determinísticas.
