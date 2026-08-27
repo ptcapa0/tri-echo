@@ -18,7 +18,7 @@ Em ambientes com botão de pré-visualização, seleciona a pasta `tri-echo` com
 
 O servidor não instala pacotes nem usa dependências externas. Se a porta 8080 estiver ocupada, usa `PORT=8090 npm run dev`.
 
-Testes: `npm test` (apenas Node.js moderno; não instala pacotes). Playtest: `python3 tests/playtest.py` com o servidor local em execução.
+Testes: `npm test` (apenas Node.js moderno; não instala pacotes). Cria o artefacto de produção com `npm run build`. Para o smoke test no artefacto, serve `dist/client` em `http://127.0.0.1:8080` e executa `python3 tests/playtest.py` (requer Playwright e Chromium).
 
 ## Instalar no telemóvel
 
@@ -27,7 +27,7 @@ Testes: `npm test` (apenas Node.js moderno; não instala pacotes). Playtest: `py
 
 ## Publicar grátis
 
-GitHub Pages: cria um repositório, envia o conteúdo desta pasta, abre **Settings → Pages**, escolhe **Deploy from a branch**, branch `main`, pasta `/ (root)`. O endereço será `https://UTILIZADOR.github.io/REPOSITORIO/`; os caminhos relativos já suportam subpastas.
+GitHub Pages publica exclusivamente `dist/client` através de GitHub Actions. Cada Pull Request é validado por testes Node, build e smoke test browser; apenas um `push` verde em `main` (ou execução manual) pode publicar produção.
 
 Alternativa: arrasta esta pasta para o painel de deploy manual do Netlify. Não é preciso build, conta de base de dados nem variáveis de ambiente.
 
