@@ -2,7 +2,7 @@ from pathlib import Path
 import os
 from playwright.sync_api import sync_playwright
 
-ROOT = "http://127.0.0.1:8080"
+ROOT = os.environ.get("PLAYTEST_ROOT", "http://127.0.0.1:8080").rstrip("/")
 OUT = Path(os.environ.get("PLAYTEST_ARTIFACTS", "tests/artifacts"))
 OUT.mkdir(exist_ok=True)
 
@@ -97,6 +97,8 @@ with sync_playwright() as p:
             assert page.locator(".power").count() == 0
         if name == "iphone":
             assert page.evaluate("navigator.serviceWorker.ready.then(() => true)")
+            assert "tri-echo-v4.2.0" in page.request.get(f"{ROOT}/sw.js").text()
+            assert "tri-echo-v4.2.0" in page.evaluate("caches.keys()")
             page.context.set_offline(True)
             page.reload(wait_until="domcontentloaded")
             assert page.locator("#playBtn").is_visible()

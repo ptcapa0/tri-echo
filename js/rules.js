@@ -25,3 +25,17 @@ export function dailyChallengeConfig(date=new Date()){
 export function snapshotRuleState(ruleState,hybridPhase){return{ruleState:structuredClone(ruleState),hybridPhase}}
 export function restoreRuleState(snapshot){return{ruleState:structuredClone(snapshot.ruleState),hybridPhase:snapshot.hybridPhase}}
 export function applySoundSetting(audio,settings){audio.enabled=settings.sound!==false;return audio.enabled}
+
+const HOLE_START_FIELDS=['table','score','streak','totalStrokes','totalPar','results','inventory','activePower','ruleState','hybridPhase','strokes','holeIndex'];
+export function captureHoleStartState(game){return Object.fromEntries(HOLE_START_FIELDS.map(key=>[key,structuredClone(game[key])]))}
+export function restoreHoleStartState(game,snapshot){for(const key of HOLE_START_FIELDS)game[key]=structuredClone(snapshot[key]);return game}
+
+export class RoundTaskController{
+ constructor(setTimer=setTimeout,clearTimer=clearTimeout){this.setTimer=setTimer;this.clearTimer=clearTimer;this.epoch=0;this.timers=new Set()}
+ beginRound(){for(const timer of this.timers)this.clearTimer(timer);this.timers.clear();return++this.epoch}
+ schedule(delay,callback){
+  const epoch=this.epoch;let timer;
+  timer=this.setTimer(()=>{this.timers.delete(timer);if(epoch===this.epoch)callback()},delay);
+  this.timers.add(timer);return timer;
+ }
+}

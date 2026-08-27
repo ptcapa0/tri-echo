@@ -4,7 +4,7 @@ import {Physics,STEP,echoFromPath,shotMetrics,powerFromPull} from './physics.js'
 import {MODES,TABLE_STYLES,TRAINING_DISCIPLINES,TRICK_SHOTS,POWERS,parForTable,golfTerm,competitivePoints,trickPoints,freshPowerInventory,evaluateTrick} from './gameplay.js';
 import {loadSave,save,exportSave,importSave} from './storage.js';
 import {AudioFX} from './audio.js';
-import {applySoundSetting,dailyChallengeConfig,deriveShotResult,fusionCaromSucceeded,restoreRuleState,shouldCreateEchoRail,snapshotRuleState} from './rules.js';
+import {applySoundSetting,captureHoleStartState,dailyChallengeConfig,deriveShotResult,fusionCaromSucceeded,restoreHoleStartState,RoundTaskController,shouldCreateEchoRail} from './rules.js';
 
 const $=s=>document.querySelector(s),canvas=$('#game'),ctx=canvas.getContext('2d',{alpha:false}),audio=new AudioFX();
 let data=loadSave(),game=null,acc=0,last=performance.now(),drag=null,particles=[],toastTimer,paused=true;
@@ -12,11 +12,14 @@ let contact={x:0,y:0},contactPointer=null,movePointer=null,controlPos=data.setti
 applySoundSetting(audio,data.settings);
 
 class Game{
- constructor(){this.mode=data.mode in MODES?data.mode:'golf';this.info=MODES[this.mode];const daily=this.mode==='daily'?dailyChallengeConfig():null;this.difficulty=daily?.difficulty||data.difficulty;this.tableStyle=daily?.tableStyle||(this.info.tableChoice?(data.tableStyle||'echo'):'snooker');this.trainingDiscipline=data.trainingDiscipline||'golf';this.trickDiscipline=data.trickDiscipline||'golf';this.seedBase=daily?.seed??Date.now()>>>0;this.holeIndex=0;this.strokes=0;this.totalStrokes=0;this.totalPar=0;this.score=0;this.streak=0;this.results=[];this.inventory=freshPowerInventory();this.activePower=null;this.ruleState={phase:'open',reds:15,colourIndex:0};this.finished=false;this.newHole()}
+ constructor(){this.mode=data.mode in MODES?data.mode:'golf';this.info=MODES[this.mode];const daily=this.mode==='daily'?dailyChallengeConfig():null;this.difficulty=daily?.difficulty||data.difficulty;this.tableStyle=daily?.tableStyle||(this.info.tableChoice?(data.tableStyle||'echo'):'snooker');this.trainingDiscipline=data.trainingDiscipline||'golf';this.trickDiscipline=data.trickDiscipline||'golf';this.seedBase=daily?.seed??Date.now()>>>0;this.holeIndex=0;this.strokes=0;this.totalStrokes=0;this.totalPar=0;this.score=0;this.streak=0;this.results=[];this.inventory=freshPowerInventory();this.activePower=null;this.ruleState={phase:'open',reds:15,colourIndex:0};this.finished=false;this.roundTasks=new RoundTaskController();this.newHole()}
  adaptive(){if(this.mode==='daily')return 0;const r=data.stats.recent||[],rate=r.length?r.filter(Boolean).length/r.length:.5;return rate>.72?2:rate<.34?-1:0}
  cueSportKind(){return this.info.kind==='american'||(this.info.kind==='training'&&this.trainingDiscipline==='american')?'american':this.info.kind==='british'||(this.info.kind==='training'&&this.trainingDiscipline==='snooker')?'british':null}
  isTraditional(){return this.info.kind==='classic'||this.info.kind==='american'||this.info.kind==='british'||(this.info.kind==='training'&&this.trainingDiscipline!=='golf')}
+ invalidateRoundTasks(){return this.roundTasks.beginRound()}
+ scheduleRoundTask(delay,callback){return this.roundTasks.schedule(delay,callback)}
  newHole(){
+  this.invalidateRoundTasks();
   const echoes=this.isTraditional()?[]:(this.table?.rails||[]).map(r=>({...r,life:r.life-1})).filter(r=>r.life>0),seed=(this.seedBase+Math.imul(this.holeIndex+1,2654435761))>>>0;
   const dims=this.mode==='daily'?{w:720,h:1120}:boardDimensions();
   let ballSet=this.info.kind==='american'?'american':this.info.kind==='british'?'british':'three',tableStyle=this.tableStyle;
@@ -27,8 +30,8 @@ class Game{
   if(this.cueSportKind()==='american')this.ruleState={group:null,phase:'open'};
   if(this.cueSportKind()==='british')this.ruleState={phase:'red',colourIndex:0};
   this.trick=this.info.kind==='trick'?TRICK_SHOTS[this.holeIndex%TRICK_SHOTS.length]:null;
-  this.hybridPhase=this.info.kind==='hybrid'?'carom':null;if(this.info.kind==='hybrid'&&this.table.hole)this.table.hole.disabled=true;this.par=this.info.kind==='classic'?1:parForTable(this.table,this.difficulty);this.strokes=0;this.ruleStateStart=snapshotRuleState(this.ruleState,this.hybridPhase);
-  this.shotProfile=shotMetrics(this.table,DIFFICULTY[this.difficulty].powerScale);this.physics=new Physics(this.table);this.holeStart=structuredClone(this.table);this.activePower=null;renderPowers();updateHUD();
+  this.hybridPhase=this.info.kind==='hybrid'?'carom':null;if(this.info.kind==='hybrid'&&this.table.hole)this.table.hole.disabled=true;this.par=this.info.kind==='classic'?1:parForTable(this.table,this.difficulty);this.strokes=0;
+  this.shotProfile=shotMetrics(this.table,DIFFICULTY[this.difficulty].powerScale);this.physics=new Physics(this.table);this.activePower=null;this.holeStartSnapshot=captureHoleStartState(this);renderPowers();updateHUD();
  }
  shoot(vx,vy,powerRatio){
   if(this.physics.active)return;this.preShot=structuredClone(this.table);this.strokes++;this.totalStrokes++;data.stats.shots++;
@@ -57,8 +60,8 @@ class Game{
  }
  finishTrick(){
   const ok=evaluateTrick(this.trick,this.physics,contact);record(ok);
-  if(ok){this.score+=trickPoints(this.strokes);this.streak++;audio.success();buzz([18,30,18]);showToast(`${this.trick.name.toUpperCase()} · ${this.strokes} TENT.`);this.holeIndex++;setTimeout(()=>this.newHole(),700)}
-  else{showToast('AINDA NÃO · REPETE');this.table=structuredClone(this.holeStart);this.physics=new Physics(this.table);updateHUD()}
+  if(ok){this.score+=trickPoints(this.strokes);this.streak++;audio.success();buzz([18,30,18]);showToast(`${this.trick.name.toUpperCase()} · ${this.strokes} TENT.`);this.holeIndex++;this.scheduleRoundTask(700,()=>this.newHole())}
+  else{showToast('AINDA NÃO · REPETE');this.invalidateRoundTasks();this.table=structuredClone(this.holeStartSnapshot.table);this.physics=new Physics(this.table);updateHUD()}
  }
  finishCueSport(scratch,kind=this.info.kind){
   const sunk=this.physics.pocketed.filter(id=>id>0),cue=this.table.balls[0];
@@ -66,7 +69,7 @@ class Game{
    let points=0,foul=scratch;const first=this.table.balls.find(x=>x.id===this.physics.firstCollision);
    if(!this.ruleState.group){const claimed=sunk.map(id=>this.table.balls.find(x=>x.id===id)).find(b=>b.role==='solid'||b.role==='stripe');if(claimed)this.ruleState.group=claimed.role}
    const group=this.ruleState.group;if(group&&first&&first.role!==group&&!(first.role==='eight'&&this.table.balls.filter(x=>x.role===group).every(x=>x.pocketed)))foul=true;
-   for(const id of sunk){const b=this.table.balls.find(x=>x.id===id);if(b.role==='eight'){const cleared=group&&this.table.balls.filter(x=>x.role===group).every(x=>x.pocketed);if(cleared&&!scratch){showToast('8-BALL · MESA LIMPA');this.score+=8;return setTimeout(()=>this.newHole(),900)}foul=true;respotBall(this.table,b)}else if(!group||b.role===group)points++;else{foul=true;respotBall(this.table,b)}}
+   for(const id of sunk){const b=this.table.balls.find(x=>x.id===id);if(b.role==='eight'){const cleared=group&&this.table.balls.filter(x=>x.role===group).every(x=>x.pocketed);if(cleared&&!scratch){showToast('8-BALL · MESA LIMPA');this.score+=8;return this.scheduleRoundTask(900,()=>this.newHole())}foul=true;respotBall(this.table,b)}else if(!group||b.role===group)points++;else{foul=true;respotBall(this.table,b)}}
    this.score+=points;if(foul){respawnBall(this.table,cue,this.seedBase+this.totalStrokes*97);showToast('FALTA · BOLA NA MÃO')}else showToast(points?`+${points} BOLA${points>1?'S':''}`:'SEM BOLA');
   }else{
    let points=0,foul=scratch;const first=this.table.balls.find(x=>x.id===this.physics.firstCollision),reds=this.table.balls.filter(x=>x.role==='red'),redsRemain=reds.some(x=>!x.pocketed);
@@ -81,26 +84,26 @@ class Game{
     const legal=sunkBalls.find(b=>b.role===expected);if(legal){points=legal.value;this.ruleState.colourIndex++;}for(const b of sunkBalls.filter(b=>b!==legal)){foul=true;if(b.role!=='red')respotBall(this.table,b)}
    }
    if(foul)points=0;this.score+=points;if(foul){respawnBall(this.table,cue,this.seedBase+this.totalStrokes*101);showToast('FALTA · SEM PONTOS')}else showToast(points?`BREAK +${points}`:'SEM PONTOS');
-   if(this.table.balls.slice(1).every(x=>x.pocketed)){showToast(`FRAME · ${this.score} PONTOS`);return setTimeout(()=>this.newHole(),1000)}
+   if(this.table.balls.slice(1).every(x=>x.pocketed)){showToast(`FRAME · ${this.score} PONTOS`);return this.scheduleRoundTask(1000,()=>this.newHole())}
   }
   this.safeReset(null);updateHUD();
  }
  finishClassic(result){
-  const ok=result.carom&&!result.cuePocketed;if(ok){record(true);this.streak++;this.score++;audio.success();buzz([18,30,18]);showToast(`3 BOLAS ×${this.streak}`);this.holeIndex++;setTimeout(()=>this.newHole(),500)}else this.handleMiss(result.pocketedIds,result.cuePocketed?'FALTA · BRANCA':'TENTA OUTRA LINHA');
+  const ok=result.carom&&!result.cuePocketed;if(ok){record(true);this.streak++;this.score++;audio.success();buzz([18,30,18]);showToast(`3 BOLAS ×${this.streak}`);this.holeIndex++;this.scheduleRoundTask(500,()=>this.newHole())}else this.handleMiss(result.pocketedIds,result.cuePocketed?'FALTA · BRANCA':'TENTA OUTRA LINHA');
  }
  completeHole(){
   const term=golfTerm(this.strokes,this.par),delta=this.strokes-this.par;this.totalPar+=this.par;this.results.push({strokes:this.strokes,par:this.par,term});record(true);
   if(this.info.competitive)this.score+=competitivePoints({strokes:this.strokes,par:this.par,streak:this.streak,cushions:this.physics.cushions,accuracy:(this.physics.contacts.size+(this.physics.pocketed.length?1:0))/3});
   else this.score=this.totalStrokes-(this.totalPar);
   this.streak=this.strokes<=this.par?this.streak+1:0;audio.success();buzz([18,35,18]);const sunkBall=this.table.balls.find(b=>b.id===this.physics.pocketed[0]);if(sunkBall)burst(sunkBall.x,sunkBall.y,'#5cf3dc');showToast(`${term} · ${this.strokes} ${this.strokes===1?'TACADA':'TACADAS'}`);unlock();this.holeIndex++;
-  if((this.mode==='tour'||this.mode==='daily')&&this.holeIndex>=6)setTimeout(()=>endGame(),850);else setTimeout(()=>this.newHole(),650);updateHUD();
+  if((this.mode==='tour'||this.mode==='daily')&&this.holeIndex>=6)this.scheduleRoundTask(850,()=>endGame(this));else this.scheduleRoundTask(650,()=>this.newHole());updateHUD();
  }
  handleMiss(sunk,label){
-  record(false);if(this.inventory.rewind&&this.activePower==='rewind'){this.inventory.rewind=0;this.activePower=null;this.strokes--;this.totalStrokes--;this.table=structuredClone(this.preShot);this.physics=new Physics(this.table);showToast('REWIND · TACADA ANULADA');renderPowers();updateHUD();return}
+  record(false);if(this.inventory.rewind&&this.activePower==='rewind'){this.invalidateRoundTasks();this.inventory.rewind=0;this.activePower=null;this.strokes--;this.totalStrokes--;this.table=structuredClone(this.preShot);this.physics=new Physics(this.table);showToast('REWIND · TACADA ANULADA');renderPowers();updateHUD();return}
   audio.fail();buzz(22);showToast(label);this.safeReset(sunk);
  }
- safeReset(pocketedIds=[]){setTimeout(()=>{for(const id of [...new Set(Array.isArray(pocketedIds)?pocketedIds:pocketedIds==null?[]:[pocketedIds])]){const ball=this.table.balls.find(b=>b.id===id);if(ball)respawnBall(this.table,ball,(this.seedBase+this.totalStrokes*3571+id)>>>0)}for(const b of this.table.balls){b.vx=b.vy=0;b.spinX=b.spinY=0}this.physics=new Physics(this.table);updateHUD()},data.settings.reducedMotion?0:260)}
- restartHole(){this.totalStrokes-=this.strokes;this.strokes=0;this.table=structuredClone(this.holeStart);const restored=restoreRuleState(this.ruleStateStart);this.ruleState=restored.ruleState;this.hybridPhase=restored.hybridPhase;this.physics=new Physics(this.table);updateHUD();showToast('BURACO REINICIADO')}
+ safeReset(pocketedIds=[]){this.scheduleRoundTask(data.settings.reducedMotion?0:260,()=>{for(const id of [...new Set(Array.isArray(pocketedIds)?pocketedIds:pocketedIds==null?[]:[pocketedIds])]){const ball=this.table.balls.find(b=>b.id===id);if(ball)respawnBall(this.table,ball,(this.seedBase+this.totalStrokes*3571+id)>>>0)}for(const b of this.table.balls){b.vx=b.vy=0;b.spinX=b.spinY=0}this.physics=new Physics(this.table);updateHUD()})}
+ restartHole(){this.invalidateRoundTasks();cancelActivePointers();restoreHoleStartState(this,this.holeStartSnapshot);acc=0;this.physics=new Physics(this.table);renderPowers();updateHUD();showToast('BURACO REINICIADO')}
 }
 
 function record(ok){data.stats.successes+=ok?1:0;data.stats.recent=[...(data.stats.recent||[]),ok].slice(-12);if(game.mode==='daily'&&ok){const d=new Date().toISOString().slice(0,10);if(!data.dailies.includes(d))data.dailies.push(d)}save(data)}
@@ -157,10 +160,10 @@ function updateHUD(){if(!game)return;const kind=game.info.kind,cueKind=game.cueS
  $('#scoreLabel').textContent=game.info.competitive?'PONTOS':'RESULTADO';$('#score').textContent=game.info.competitive?game.score:formatDelta(game.score);$('#streakLabel').textContent='TACADAS';$('#streak').textContent=game.strokes;$('#statusLabel').textContent='PAR';$('#status').textContent=game.par;$('#objective').textContent=game.hybridPhase==='carom'?'FASE 1 · BILHAR DE 3 BOLAS':`OBJETIVO ${game.holeIndex+1} · EMBOCA UMA COR`}
 function formatDelta(n){return n===0?'E':n>0?`+${n}`:String(n)}
 function updateContinue(){const resumable=!!game&&!game.finished;$('#continueBtn').classList.toggle('hidden',!resumable)}
-function start(){cancelActivePointers();data.mode=$('#mode').value;if(data.mode!=='daily'){data.difficulty=$('#difficulty').value;data.tableStyle=$('#tableStyle').value}data.trainingDiscipline=$('#trainingDiscipline').value;data.trickDiscipline=$('#trickDiscipline').value;save(data);contact={x:0,y:0};game=new Game();renderPowers();updateHUD();updateContactUI();placeContact();$('#contactControl').classList.remove('hidden');$('#menu').close();paused=false;updateContinue();if(!data.tutorial)coach(1)}
+function start(){cancelActivePointers();game?.invalidateRoundTasks();data.mode=$('#mode').value;if(data.mode!=='daily'){data.difficulty=$('#difficulty').value;data.tableStyle=$('#tableStyle').value}data.trainingDiscipline=$('#trainingDiscipline').value;data.trickDiscipline=$('#trickDiscipline').value;save(data);contact={x:0,y:0};game=new Game();renderPowers();updateHUD();updateContactUI();placeContact();$('#contactControl').classList.remove('hidden');$('#menu').close();paused=false;updateContinue();if(!data.tutorial)coach(1)}
 function continueGame(){if(!game||game.finished)return;cancelActivePointers();$('#menu').close();paused=false}
 function openMenu(){cancelActivePointers();paused=true;updateContinue();if(!$('#menu').open)$('#menu').showModal()}
-function endGame(){if(!game)return;game.finished=true;data.best[game.mode]=Math.max(data.best[game.mode]||0,game.score);data.bestStreak=Math.max(data.bestStreak,game.streak);save(data);showToast(`VOLTA · ${game.score} PONTOS`);setTimeout(openMenu,800)}
+function endGame(expectedGame=game){if(!expectedGame||game!==expectedGame)return;game.finished=true;data.best[game.mode]=Math.max(data.best[game.mode]||0,game.score);data.bestStreak=Math.max(data.bestStreak,game.streak);save(data);showToast(`VOLTA · ${game.score} PONTOS`);game.scheduleRoundTask(800,()=>{if(game===expectedGame)openMenu()})}
 function openSettings(){cancelActivePointers();paused=true;$('#sound').checked=data.settings.sound;$('#haptics').checked=data.settings.haptics;$('#reduced').checked=data.settings.reducedMotion;if(!$('#settings').open)$('#settings').showModal()}
 
 canvas.addEventListener('pointerdown',down);canvas.addEventListener('pointermove',move);canvas.addEventListener('pointerup',up);canvas.addEventListener('pointercancel',cancelActivePointers);canvas.addEventListener('lostpointercapture',cancelActivePointers);$('#cueFace').addEventListener('pointerdown',contactDown);$('#cueFace').addEventListener('pointermove',contactMove);$('#cueFace').addEventListener('pointerup',contactUp);$('#cueFace').addEventListener('pointercancel',cancelActivePointers);$('#cueFace').addEventListener('lostpointercapture',cancelActivePointers);$('#moveContact').addEventListener('pointerdown',moveControlDown);$('#moveContact').addEventListener('pointermove',moveControl);$('#moveContact').addEventListener('pointerup',moveControlUp);$('#moveContact').addEventListener('pointercancel',cancelActivePointers);$('#moveContact').addEventListener('lostpointercapture',cancelActivePointers);window.addEventListener('resize',resize);
