@@ -1,8 +1,9 @@
 from pathlib import Path
+import os
 from playwright.sync_api import sync_playwright
 
 ROOT = "http://127.0.0.1:8080"
-OUT = Path("tests/artifacts")
+OUT = Path(os.environ.get("PLAYTEST_ARTIFACTS", "tests/artifacts"))
 OUT.mkdir(exist_ok=True)
 
 with sync_playwright() as p:
@@ -63,7 +64,7 @@ with sync_playwright() as p:
         page.mouse.move(x+dx*pull, y+dy*pull, steps=5)
         page.screenshot(path=str(OUT / f"{name}-aim.png"), full_page=True)
         page.mouse.up()
-        page.wait_for_timeout(100)
+        page.wait_for_function("window.__TRI_ECHO__.state().strokes === 1")
         shot_state = page.evaluate("window.__TRI_ECHO__.state()")
         assert shot_state["active"] is True
         assert shot_state["maxSpeed"] >= 2400
