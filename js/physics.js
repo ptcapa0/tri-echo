@@ -2,21 +2,14 @@ import {clamp,len,segmentClosest} from './math.js';
 
 export const STEP=1/180;
 export const BASE_DRAG=.42;
-
-export function shotMetrics(table,powerScale=1){
- const b=table.bounds,diameter=(table.balls[0]?.r||18)*2;
- const playableLong=Math.max(b.r-b.l,b.b-b.t)-diameter;
- const minimumControlDistance=diameter*3;
- const guaranteedPath=playableLong*3+minimumControlDistance;
- const maxSpeed=clamp(guaranteedPath*.88*powerScale,2400,3300);
- return{diameter,playableLong,minimumControlDistance,guaranteedPath,maxSpeed,fullPull:clamp(diameter*5.25,165,220),deadZone:diameter*.58};
-}
-
-export function powerFromPull(distance,metrics){
- if(distance<=metrics.deadZone)return{speed:0,ratio:0};
- const ratio=clamp((distance-metrics.deadZone)/(metrics.fullPull-metrics.deadZone),0,1);
- return{speed:95+(metrics.maxSpeed-95)*Math.pow(ratio,1.55),ratio};
-}
+export const PHYSICS_PROFILE=Object.freeze({
+ fixedDt:STEP,
+ stopSpeed:5,
+ maxShotTime:18,
+ maxSafeStepRatio:.65,
+ echo:Object.freeze({drag:BASE_DRAG,rollingResistance:18,cushionRestitution:.94,cushionTangentRetention:.985}),
+ traditional:Object.freeze({drag:.34,rollingResistance:15,cushionRestitution:.94,cushionTangentRetention:.985})
+});
 
 export class Physics{
  constructor(table){this.load(table)}
@@ -44,9 +37,10 @@ export class Physics{
   for(const b of this.balls){
    if(b.pocketed)continue;
    this.pocketPull(b,dt);
-   let drag=this.table.traditional?.34:BASE_DRAG;
+   const profile=this.table.traditional?PHYSICS_PROFILE.traditional:PHYSICS_PROFILE.echo;
+   let drag=profile.drag;
    if(frictionZone&&b.x>frictionZone.x&&b.x<frictionZone.x+frictionZone.w&&b.y>frictionZone.y&&b.y<frictionZone.y+frictionZone.h)drag*=frictionZone.factor;
-   const speed=len(b.vx,b.vy),rollingResistance=this.table.traditional?15:18,rolling=Math.max(0,1-rollingResistance*dt/Math.max(speed,rollingResistance));
+   const speed=len(b.vx,b.vy),rollingResistance=profile.rollingResistance,rolling=Math.max(0,1-rollingResistance*dt/Math.max(speed,rollingResistance));
    b.vx*=Math.exp(-drag*dt)*rolling;b.vy*=Math.exp(-drag*dt)*rolling;
    b.spinX*=Math.exp(-.62*dt);b.spinY*=Math.exp(-.7*dt);
    const ox=b.x,oy=b.y;b.x+=b.vx*dt;b.y+=b.vy*dt;
@@ -62,7 +56,7 @@ export class Physics{
   const cue=this.balls[0],last=this.path[this.path.length-1];
   if(!cue.pocketed&&(!last||Math.hypot(cue.x-last.x,cue.y-last.y)>17))this.path.push({x:cue.x,y:cue.y});
   const live=this.balls.filter(b=>!b.pocketed);
-  if(this.time>18||live.every(b=>len(b.vx,b.vy)<5)){
+  if(this.time>PHYSICS_PROFILE.maxShotTime||live.every(b=>len(b.vx,b.vy)<PHYSICS_PROFILE.stopSpeed)){
    for(const b of live){b.vx=0;b.vy=0}
    this.active=false;return true;
   }
@@ -83,13 +77,14 @@ export class Physics{
  }
 
  wall(b,z){
+  const profile=this.table.traditional?PHYSICS_PROFILE.traditional:PHYSICS_PROFILE.echo;
   let axis='';
-  if(b.x-b.r<z.l){b.x=z.l+b.r;b.vx=Math.abs(b.vx)*.94;axis='v'}
-  if(b.x+b.r>z.r){b.x=z.r-b.r;b.vx=-Math.abs(b.vx)*.94;axis='v'}
-  if(b.y-b.r<z.t){b.y=z.t+b.r;b.vy=Math.abs(b.vy)*.94;axis='h'}
-  if(b.y+b.r>z.b){b.y=z.b-b.r;b.vy=-Math.abs(b.vy)*.94;axis='h'}
+  if(b.x-b.r<z.l){b.x=z.l+b.r;b.vx=Math.abs(b.vx)*profile.cushionRestitution;axis='v'}
+  if(b.x+b.r>z.r){b.x=z.r-b.r;b.vx=-Math.abs(b.vx)*profile.cushionRestitution;axis='v'}
+  if(b.y-b.r<z.t){b.y=z.t+b.r;b.vy=Math.abs(b.vy)*profile.cushionRestitution;axis='h'}
+  if(b.y+b.r>z.b){b.y=z.b-b.r;b.vy=-Math.abs(b.vy)*profile.cushionRestitution;axis='h'}
   if(axis){
-   if(axis==='v')b.vy*=.985;else b.vx*=.985;
+   if(axis==='v')b.vy*=profile.cushionTangentRetention;else b.vx*=profile.cushionTangentRetention;
    if(axis==='v')b.vy+=b.spinX*Math.abs(b.vx)*.16;
    else b.vx-=b.spinX*Math.abs(b.vy)*.16;
    b.spinX*=-.72;

@@ -2,11 +2,11 @@
 
 Jogo de física mobile-first, sem backend e sem dependências. **Table Golf** conta todas as tacadas até embocar; **Bilhar de 3 bolas** mantém a carambola clássica; Fusion combina as duas regras. Echo Tour e Daily Golf acrescentam pontuação competitiva e cinco poderes.
 
-Cada modo original pode usar a Mesa Echo com portal móvel ou uma mesa de snooker com seis bolsas. A versão 4.1 inclui pool americano 8-ball com lisas e riscadas de leitura imediata, snooker britânico com 22 bolas, seis desafios Trick Shot e treino contínuo de Table Golf, Bilhar de 3 bolas, Pool americano ou Snooker. As disciplinas tradicionais usam pano livre, sem bumpers, zonas artificiais ou Echo Rails.
+Cada modo original pode usar a Mesa Echo com portal móvel ou uma mesa de snooker com seis bolsas. A versão 4.3 inclui pool americano 8-ball com lisas e riscadas de leitura imediata, snooker britânico com 22 bolas, seis desafios Trick Shot e treino contínuo de Table Golf, Bilhar de 3 bolas, Pool americano ou Snooker. As disciplinas tradicionais usam pano livre, sem bumpers, zonas artificiais ou Echo Rails.
 
 O controlo circular **IMPACTO** é independente da mira e pode ser arrastado pela pega **MOVER**, libertando qualquer zona importante da mesa. Move o ponto para cima para seguimento, para baixo para recuo ou para os lados para efeito lateral.
 
-A potência adapta-se às dimensões da mesa. Um arrasto máximo garante alcance para pelo menos três comprimentos úteis da mesa mais três diâmetros de bola; o início da curva continua suave para jogadas de precisão.
+A potência adapta-se às dimensões da mesa através da própria simulação: o máximo é a menor velocidade que garante três comprimentos úteis, três diâmetros de reserva e margem de segurança. A força usa a distância do dedo em píxeis CSS, é igual entre dificuldades e cresce continuamente desde zero para permitir jogadas de precisão.
 
 ## Jogar localmente
 
@@ -18,7 +18,7 @@ Em ambientes com botão de pré-visualização, seleciona a pasta `tri-echo` com
 
 O servidor não instala pacotes nem usa dependências externas. Se a porta 8080 estiver ocupada, usa `PORT=8090 npm run dev`.
 
-Testes: `npm test` (apenas Node.js moderno; não instala pacotes). Cria o artefacto de produção com `npm run build`. Para o smoke test no artefacto, serve `dist/client` em `http://127.0.0.1:8080` e executa `python3 tests/playtest.py` (requer Playwright e Chromium).
+Testes: `npm test` (apenas Node.js moderno; não instala pacotes). Cria o artefacto de produção com `npm run build`. O relatório quantitativo de potência é `npm run physics:report`. Para o smoke test no artefacto, serve `dist/client` em `http://127.0.0.1:8080` e executa `python3 tests/playtest.py` (requer Playwright e Chromium).
 
 ## Instalar no telemóvel
 

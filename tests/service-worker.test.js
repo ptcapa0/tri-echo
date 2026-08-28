@@ -4,7 +4,7 @@ import {readFile} from 'node:fs/promises';
 import vm from 'node:vm';
 
 test('service worker deletes only obsolete TRI//ECHO caches',async()=>{
- const handlers={},deleted=[],keys=['tri-echo-v4.2.0','tri-echo-v4.2.1','outro-jogo-v1','qualquer-cache-X'];
+ const handlers={},deleted=[],keys=['tri-echo-v4.2.0','tri-echo-v4.2.1','tri-echo-v4.3.0','outro-jogo-v1','qualquer-cache-X'];
  let activation,claimed=false;
  const context={
   self:{addEventListener:(type,handler)=>handlers[type]=handler,clients:{claim:async()=>{claimed=true}}},
@@ -13,6 +13,6 @@ test('service worker deletes only obsolete TRI//ECHO caches',async()=>{
  vm.runInNewContext(await readFile('sw.js','utf8'),context);
  handlers.activate({waitUntil:promise=>activation=promise});
  await activation;
- assert.deepEqual(deleted,['tri-echo-v4.2.0']);
+ assert.deepEqual(deleted,['tri-echo-v4.2.0','tri-echo-v4.2.1']);
  assert.equal(claimed,true);
 });
