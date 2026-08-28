@@ -10,9 +10,9 @@
 - Table Golf: cada tentativa conta como tacada e não há limite; embocar uma cor conclui o objetivo e compara o resultado com o par; a branca numa bolsa ou portal é falta e reaparece.
 - Bilhar de 3 bolas: na Mesa Echo não existe portal; a branca deve tocar nas outras duas bolas na mesma tacada. A Mesa Snooker acrescenta seis bolsas.
 - Fusion: primeiro completa a carambola, depois ativa o portal e tenta embocar.
-- Controlos: arrasto inverso para direção/força; controlo circular móvel para seguimento, recuo e efeito lateral.
-- Física: timestep de 1/180 s, atrito exponencial mais resistência de rolamento, restituição consistente, transferência tangencial de spin, atração local do portal e limite seguro de 14 s.
-- Potência: máximo cobre três comprimentos úteis mais três diâmetros; curva exponencial preserva precisão inicial.
+- Controlos: arrasto inverso; direção em coordenadas da mesa e força em píxeis CSS, com gesto máximo de cerca de 40% da largura útil; controlo circular móvel para seguimento, recuo e efeito lateral.
+- Física: timestep de 1/180 s, atrito exponencial mais resistência de rolamento, restituição consistente, transferência tangencial de spin, atração local do portal e limite seguro de 18 s.
+- Potência: um solver sobre a simulação real encontra a menor velocidade que cobre três comprimentos úteis, três diâmetros de reserva e margem geométrica; a curva contínua começa em zero e a física fundamental não muda com a dificuldade.
 - Pontuação: modos casuais mostram resultado relativo ao par. Echo Tour e Daily Golf usam pontos por desempenho abaixo do par, precisão, ressaltos e série.
 - Daily Golf: seed diário UTC, dimensões virtuais 720 × 1120 e configuração canónica igual para todos (`normal`, Mesa Echo, adaptive 0), sem depender de preferências ou histórico locais.
 - Poderes competitivos: Traço Longo, Lente, Fase, Forja Echo e Rewind; uma utilização por volta, sem moedas, compras ou aleatoriedade paga.

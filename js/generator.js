@@ -1,9 +1,9 @@
 import {mulberry32,dist,hashString} from './math.js';
 export const DIFFICULTY={
- relaxed:{preview:1,powerScale:1,obstacles:[0,1],lives:5,rails:3,margin:70,pocket:40},
- normal:{preview:.62,powerScale:1.03,obstacles:[1,2],lives:3,rails:3,margin:58,pocket:36},
- hard:{preview:.34,powerScale:1.06,obstacles:[2,3],lives:2,rails:2,margin:48,pocket:32},
- adaptive:{preview:.58,powerScale:1.03,obstacles:[1,3],lives:3,rails:3,margin:56,pocket:36}
+ relaxed:{preview:1,obstacles:[0,1],lives:5,rails:3,margin:70,pocket:40},
+ normal:{preview:.62,obstacles:[1,2],lives:3,rails:3,margin:58,pocket:36},
+ hard:{preview:.34,obstacles:[2,3],lives:2,rails:2,margin:48,pocket:32},
+ adaptive:{preview:.58,obstacles:[1,3],lives:3,rails:3,margin:56,pocket:36}
 };
 export function dailySeed(date=new Date()){return hashString(`tri-echo-v4:${date.getUTCFullYear()}-${date.getUTCMonth()+1}-${date.getUTCDate()}`)}
 const ball=(x,y,id,r=18,extra={})=>({x,y,vx:0,vy:0,r,id,pocketed:false,...extra});
