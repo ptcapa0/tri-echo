@@ -6,12 +6,44 @@ ROOT = os.environ.get("PLAYTEST_ROOT", "http://127.0.0.1:8080").rstrip("/")
 OUT = Path(os.environ.get("PLAYTEST_ARTIFACTS", "tests/artifacts"))
 OUT.mkdir(exist_ok=True)
 
+def take_short_shot(page, pull=48):
+    canvas = page.locator("#game")
+    box = canvas.bounding_box()
+    state = page.evaluate("window.__TRI_ECHO__.state()")
+    x = box["x"] + box["width"] * state["cue"]["x"]
+    y = box["y"] + box["height"] * state["cue"]["y"]
+    spaces = [
+        (x-box["x"]-20, -1, 0),
+        (box["x"]+box["width"]-x-20, 1, 0),
+        (y-box["y"]-20, 0, -1),
+        (box["y"]+box["height"]-y-20, 0, 1),
+    ]
+    _, dx, dy = max(spaces, key=lambda item: item[0])
+    page.dispatch_event("#game", "pointerdown", {"pointerId": 88, "clientX": x, "clientY": y})
+    page.dispatch_event("#game", "pointermove", {"pointerId": 88, "clientX": x+dx*pull, "clientY": y+dy*pull})
+    page.dispatch_event("#game", "pointerup", {"pointerId": 88, "clientX": x+dx*pull, "clientY": y+dy*pull})
+    return state
+
+def take_velocity_shot(page, velocity, pointer_id=89):
+    box = page.locator("#game").bounding_box()
+    state = page.evaluate("window.__TRI_ECHO__.state()")
+    cue = state["ballState"][0]
+    speed = (velocity["vx"]**2 + velocity["vy"]**2)**.5
+    pull = velocity["fullPull"] + 4
+    x = box["x"] + box["width"] * cue["x"] / velocity["tableWidth"]
+    y = box["y"] + box["height"] * cue["y"] / velocity["tableHeight"]
+    dx = -velocity["vx"] / speed * pull / velocity["tableWidth"] * box["width"]
+    dy = -velocity["vy"] / speed * pull / velocity["tableHeight"] * box["height"]
+    page.dispatch_event("#game", "pointerdown", {"pointerId": pointer_id, "clientX": x, "clientY": y})
+    page.dispatch_event("#game", "pointermove", {"pointerId": pointer_id, "clientX": x+dx, "clientY": y+dy})
+    page.dispatch_event("#game", "pointerup", {"pointerId": pointer_id, "clientX": x+dx, "clientY": y+dy})
+
 with sync_playwright() as p:
     browser = p.chromium.launch(headless=True)
     for name, viewport in [("iphone", {"width": 390, "height": 844}), ("android", {"width": 412, "height": 915}), ("desktop", {"width": 1024, "height": 800})]:
         page = browser.new_page(viewport=viewport, device_scale_factor=1)
         errors = []
-        page.on("console", lambda msg: errors.append(msg.text) if msg.type == "error" else None)
+        page.on("console", lambda msg: errors.append(f"{msg.text} @ {msg.location}") if msg.type == "error" else None)
         page.on("pageerror", lambda err: errors.append(str(err)))
         page.goto(ROOT, wait_until="networkidle")
         assert page.locator("#menu").get_attribute("open") is not None
@@ -60,11 +92,10 @@ with sync_playwright() as p:
         ]
         available, dx, dy = max(spaces, key=lambda item: item[0])
         pull = min(180, available)
-        page.mouse.move(x, y)
-        page.mouse.down()
-        page.mouse.move(x+dx*pull, y+dy*pull, steps=5)
+        page.dispatch_event("#game", "pointerdown", {"pointerId": 55, "clientX": x, "clientY": y})
+        page.dispatch_event("#game", "pointermove", {"pointerId": 55, "clientX": x+dx*pull, "clientY": y+dy*pull})
         page.screenshot(path=str(OUT / f"{name}-aim.png"), full_page=True)
-        page.mouse.up()
+        page.dispatch_event("#game", "pointerup", {"pointerId": 55, "clientX": x+dx*pull, "clientY": y+dy*pull})
         page.wait_for_function("window.__TRI_ECHO__.state().strokes === 1")
         shot_state = page.evaluate("window.__TRI_ECHO__.state()")
         assert shot_state["active"] is True
@@ -97,8 +128,14 @@ with sync_playwright() as p:
             assert page.locator(".power").count() == 0
         if name == "iphone":
             assert page.evaluate("navigator.serviceWorker.ready.then(() => true)")
-            assert "tri-echo-v4.2.0" in page.request.get(f"{ROOT}/sw.js").text()
-            assert "tri-echo-v4.2.0" in page.evaluate("caches.keys()")
+            assert "tri-echo-v4.2.1" in page.request.get(f"{ROOT}/sw.js").text()
+            assert "tri-echo-v4.2.1" in page.evaluate("caches.keys()")
+            page.evaluate("caches.open('playtest-unrelated-cache')")
+            page.evaluate("navigator.serviceWorker.getRegistration().then(registration => registration.unregister())")
+            page.reload(wait_until="networkidle")
+            assert page.evaluate("navigator.serviceWorker.ready.then(() => true)")
+            assert "playtest-unrelated-cache" in page.evaluate("caches.keys()")
+            page.evaluate("caches.delete('playtest-unrelated-cache')")
             page.context.set_offline(True)
             page.reload(wait_until="domcontentloaded")
             assert page.locator("#playBtn").is_visible()
@@ -216,6 +253,129 @@ with sync_playwright() as p:
     page.mouse.up()
     page.wait_for_function("window.__TRI_ECHO__.state().strokes === 1")
     assert page.evaluate("window.__TRI_ECHO__.state().strokes") == 1
+    page.close()
+
+    # UI restart restores the observable hole-start state after a real shot.
+    page = browser.new_page(viewport={"width": 1024, "height": 800})
+    errors = []
+    page.on("console", lambda msg: errors.append(msg.text) if msg.type == "error" else None)
+    page.on("pageerror", lambda err: errors.append(str(err)))
+    page.goto(ROOT, wait_until="networkidle")
+    page.locator("#mode").select_option("classic")
+    page.locator("#tableStyle").select_option("echo")
+    page.locator("#playBtn").click()
+    initial = page.evaluate("window.__TRI_ECHO__.state()")
+    take_short_shot(page)
+    page.wait_for_function("window.__TRI_ECHO__.state().strokes === 1")
+    page.wait_for_function("window.__TRI_ECHO__.state().interactionLocked && !window.__TRI_ECHO__.state().active", timeout=25000)
+    assert page.locator("#retryBtn").is_disabled()
+    page.wait_for_function("window.__TRI_ECHO__.state().canAcceptGameplayInput === true", timeout=25000)
+    changed = page.evaluate("window.__TRI_ECHO__.state()")
+    assert changed["strokes"] == 1 and changed["totalStrokes"] == 1
+    page.locator("#retryBtn").click()
+    restored = page.evaluate("window.__TRI_ECHO__.state()")
+    for key in ("mode", "seed", "score", "ballState"):
+        assert restored[key] == initial[key]
+    assert restored["strokes"] == 0
+    assert restored["totalStrokes"] == 0
+    assert restored["canAcceptGameplayInput"] is True
+    page.screenshot(path=str(OUT / "desktop-restart-restored.png"), full_page=True)
+    assert errors == [], errors
+    page.close()
+
+    # A simulated read-only search finds a real winning Daily shot; UI input
+    # remains locked until completeHole advances to the next generated hole.
+    page = browser.new_page(viewport={"width": 412, "height": 915})
+    errors = []
+    page.on("console", lambda msg: errors.append(msg.text) if msg.type == "error" else None)
+    page.on("pageerror", lambda err: errors.append(str(err)))
+    page.goto(ROOT, wait_until="networkidle")
+    page.locator("#mode").select_option("daily")
+    page.locator("#playBtn").click()
+    winning_velocity = page.evaluate("""async () => {
+        const state = window.__TRI_ECHO__.state();
+        const {generateTable, DIFFICULTY} = await import('./js/generator.js');
+        const {Physics, STEP, shotMetrics} = await import('./js/physics.js');
+        const seed = (state.seed + Math.imul(state.holeIndex + 1, 2654435761)) >>> 0;
+        const table = generateTable(seed, 'normal', 0, 720, 1120, {
+            tableStyle: 'echo', ballSet: 'three', traditional: false
+        });
+        table.rails = [];
+        const metrics = shotMetrics(table, DIFFICULTY.normal.powerScale);
+        for (let degrees = 0; degrees < 360; degrees += 1) {
+            const angle = degrees * Math.PI / 180;
+            const candidate = structuredClone(table);
+            const physics = new Physics(candidate);
+            const vx = Math.cos(angle) * metrics.maxSpeed;
+            const vy = Math.sin(angle) * metrics.maxSpeed;
+            physics.shoot(vx, vy, {x: 0, y: 0}, 1, {});
+            for (let step = 0; step < 3241 && physics.active; step++) physics.step(STEP);
+            if (physics.pocketed.some(id => id > 0) && !physics.pocketed.includes(0)) {
+                return {vx, vy, fullPull: metrics.fullPull, tableWidth: table.w, tableHeight: table.h};
+            }
+        }
+        return null;
+    }""")
+    assert winning_velocity is not None, "no deterministic winning Daily shot found"
+    take_velocity_shot(page, winning_velocity)
+    page.wait_for_function("window.__TRI_ECHO__.state().interactionLocked && window.__TRI_ECHO__.state().holeIndex === 1", timeout=25000)
+    locked = page.evaluate("window.__TRI_ECHO__.state()")
+    assert locked["strokes"] == 1 and locked["totalStrokes"] == 1
+    assert locked["retryDisabled"] is True
+    take_short_shot(page)
+    page.locator("#retryBtn").evaluate("button => button.click()")
+    blocked = page.evaluate("window.__TRI_ECHO__.state()")
+    assert blocked["strokes"] == locked["strokes"]
+    assert blocked["totalStrokes"] == locked["totalStrokes"]
+    assert blocked["holeIndex"] == 1
+    assert blocked["dragActive"] is False
+    page.screenshot(path=str(OUT / "android-success-transition-locked.png"), full_page=True)
+    page.wait_for_function("window.__TRI_ECHO__.state().holeIndex === 1 && window.__TRI_ECHO__.state().strokes === 0 && window.__TRI_ECHO__.state().canAcceptGameplayInput", timeout=5000)
+    assert page.evaluate("window.__TRI_ECHO__.state().interactionLocked") is False
+    take_short_shot(page)
+    page.wait_for_function("window.__TRI_ECHO__.state().strokes === 1")
+    assert errors == [], errors
+    page.close()
+
+    # Delayed reset locks aim, powers and retry, then restores normal input.
+    page = browser.new_page(viewport={"width": 412, "height": 915})
+    errors = []
+    page.on("console", lambda msg: errors.append(msg.text) if msg.type == "error" else None)
+    page.on("pageerror", lambda err: errors.append(str(err)))
+    page.goto(ROOT, wait_until="networkidle")
+    page.locator("#mode").select_option("tour")
+    page.locator("#playBtn").click()
+    take_short_shot(page)
+    page.wait_for_function("window.__TRI_ECHO__.state().interactionLocked && !window.__TRI_ECHO__.state().active", timeout=25000)
+    locked = page.evaluate("window.__TRI_ECHO__.state()")
+    assert locked["interactionLockReason"] == "shot-resolution"
+    assert locked["retryDisabled"] is True
+    assert page.locator(".power:enabled").count() == 0
+    epoch = locked["roundEpoch"]
+    strokes = locked["strokes"]
+    cue = locked["cue"]
+    box = page.locator("#game").bounding_box()
+    x = box["x"] + box["width"] * cue["x"]
+    y = box["y"] + box["height"] * cue["y"]
+    page.dispatch_event("#game", "pointerdown", {"pointerId": 91, "clientX": x, "clientY": y})
+    page.dispatch_event("#game", "pointermove", {"pointerId": 91, "clientX": x+120, "clientY": y})
+    page.dispatch_event("#game", "pointerup", {"pointerId": 91, "clientX": x+120, "clientY": y})
+    page.locator("#retryBtn").evaluate("button => button.click()")
+    still_locked = page.evaluate("window.__TRI_ECHO__.state()")
+    assert still_locked["strokes"] == strokes
+    assert still_locked["totalStrokes"] == locked["totalStrokes"]
+    assert still_locked["roundEpoch"] == epoch
+    assert still_locked["dragActive"] is False
+    page.screenshot(path=str(OUT / "android-transition-locked.png"), full_page=True)
+    page.wait_for_function("window.__TRI_ECHO__.state().canAcceptGameplayInput === true", timeout=5000)
+    ready = page.evaluate("window.__TRI_ECHO__.state()")
+    assert ready["interactionLocked"] is False
+    assert ready["retryDisabled"] is False
+    assert page.locator(".power:enabled").count() == 5
+    ready_strokes = ready["strokes"]
+    take_short_shot(page)
+    page.wait_for_function(f"window.__TRI_ECHO__.state().strokes === {ready_strokes + 1}")
+    assert errors == [], errors
     page.close()
 
     # Persisted sound=false is effective immediately after reload.
