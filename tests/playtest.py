@@ -19,10 +19,9 @@ def take_short_shot(page, pull=48):
         (box["y"]+box["height"]-y-20, 0, 1),
     ]
     _, dx, dy = max(spaces, key=lambda item: item[0])
-    page.mouse.move(x, y)
-    page.mouse.down()
-    page.mouse.move(x+dx*pull, y+dy*pull, steps=4)
-    page.mouse.up()
+    page.dispatch_event("#game", "pointerdown", {"pointerId": 88, "clientX": x, "clientY": y})
+    page.dispatch_event("#game", "pointermove", {"pointerId": 88, "clientX": x+dx*pull, "clientY": y+dy*pull})
+    page.dispatch_event("#game", "pointerup", {"pointerId": 88, "clientX": x+dx*pull, "clientY": y+dy*pull})
     return state
 
 with sync_playwright() as p:
@@ -79,11 +78,10 @@ with sync_playwright() as p:
         ]
         available, dx, dy = max(spaces, key=lambda item: item[0])
         pull = min(180, available)
-        page.mouse.move(x, y)
-        page.mouse.down()
-        page.mouse.move(x+dx*pull, y+dy*pull, steps=5)
+        page.dispatch_event("#game", "pointerdown", {"pointerId": 55, "clientX": x, "clientY": y})
+        page.dispatch_event("#game", "pointermove", {"pointerId": 55, "clientX": x+dx*pull, "clientY": y+dy*pull})
         page.screenshot(path=str(OUT / f"{name}-aim.png"), full_page=True)
-        page.mouse.up()
+        page.dispatch_event("#game", "pointerup", {"pointerId": 55, "clientX": x+dx*pull, "clientY": y+dy*pull})
         page.wait_for_function("window.__TRI_ECHO__.state().strokes === 1")
         shot_state = page.evaluate("window.__TRI_ECHO__.state()")
         assert shot_state["active"] is True
@@ -116,8 +114,8 @@ with sync_playwright() as p:
             assert page.locator(".power").count() == 0
         if name == "iphone":
             assert page.evaluate("navigator.serviceWorker.ready.then(() => true)")
-            assert "tri-echo-v4.2.0" in page.request.get(f"{ROOT}/sw.js").text()
-            assert "tri-echo-v4.2.0" in page.evaluate("caches.keys()")
+            assert "tri-echo-v4.2.1" in page.request.get(f"{ROOT}/sw.js").text()
+            assert "tri-echo-v4.2.1" in page.evaluate("caches.keys()")
             page.context.set_offline(True)
             page.reload(wait_until="domcontentloaded")
             assert page.locator("#playBtn").is_visible()
@@ -249,6 +247,8 @@ with sync_playwright() as p:
     initial = page.evaluate("window.__TRI_ECHO__.state()")
     take_short_shot(page)
     page.wait_for_function("window.__TRI_ECHO__.state().strokes === 1")
+    page.wait_for_function("window.__TRI_ECHO__.state().interactionLocked && !window.__TRI_ECHO__.state().active", timeout=25000)
+    assert page.locator("#retryBtn").is_disabled()
     page.wait_for_function("window.__TRI_ECHO__.state().canAcceptGameplayInput === true", timeout=25000)
     changed = page.evaluate("window.__TRI_ECHO__.state()")
     assert changed["strokes"] == 1 and changed["totalStrokes"] == 1
@@ -298,8 +298,9 @@ with sync_playwright() as p:
     assert ready["interactionLocked"] is False
     assert ready["retryDisabled"] is False
     assert page.locator(".power:enabled").count() == 5
+    ready_strokes = ready["strokes"]
     take_short_shot(page)
-    page.wait_for_function(f"window.__TRI_ECHO__.state().strokes === {strokes + 1}")
+    page.wait_for_function(f"window.__TRI_ECHO__.state().strokes === {ready_strokes + 1}")
     assert errors == [], errors
     page.close()
 
