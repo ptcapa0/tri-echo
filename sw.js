@@ -1,3 +1,4 @@
+const CACHE_PREFIX='tri-echo-';
 const CACHE='tri-echo-v4.2.1';
 const FILES=[
  './','./index.html','./style.css','./manifest.webmanifest',
@@ -13,7 +14,7 @@ self.addEventListener('install',event=>{
 self.addEventListener('activate',event=>{
  event.waitUntil(
   caches.keys()
-   .then(keys=>Promise.all(keys.filter(key=>key!==CACHE).map(key=>caches.delete(key))))
+   .then(keys=>Promise.all(keys.filter(key=>key.startsWith(CACHE_PREFIX)&&key!==CACHE).map(key=>caches.delete(key))))
    .then(()=>self.clients.claim())
  );
 });

@@ -19,7 +19,7 @@ export function fusionCaromSucceeded(result){return result.carom&&!result.cuePoc
 export function shouldCreateEchoRail(result,{forged=false}={}){return forged||(!result.cuePocketed&&(result.carom||result.objectPocketedIds.length>0))}
 
 export function dailyChallengeConfig(date=new Date()){
- return{seed:dailySeed(date),difficulty:'normal',tableStyle:'echo',adaptive:0,width:720,height:1120};
+ return{dayKey:date.toISOString().slice(0,10),seed:dailySeed(date),difficulty:'normal',tableStyle:'echo',adaptive:0,width:720,height:1120};
 }
 
 export function snapshotRuleState(ruleState,hybridPhase){return{ruleState:structuredClone(ruleState),hybridPhase}}
