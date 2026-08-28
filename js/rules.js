@@ -25,13 +25,23 @@ export function dailyChallengeConfig(date=new Date()){
 export function snapshotRuleState(ruleState,hybridPhase){return{ruleState:structuredClone(ruleState),hybridPhase}}
 export function restoreRuleState(snapshot){return{ruleState:structuredClone(snapshot.ruleState),hybridPhase:snapshot.hybridPhase}}
 export function applySoundSetting(audio,settings){audio.enabled=settings.sound!==false;return audio.enabled}
+export function recordHoleResult(data,ok){data.stats.successes+=ok?1:0;data.stats.recent=[...(data.stats.recent||[]),ok].slice(-12);return data}
+export function markDailyCompleted(data,dayKey){if(data.dailies.includes(dayKey))return false;data.dailies.push(dayKey);return true}
+export function completeDailyRun(data,{mode,holeIndex,dayKey,totalHoles=6}){return mode==='daily'&&holeIndex>=totalHoles?markDailyCompleted(data,dayKey):false}
+
+export class InteractionGate{
+ constructor(){this.locked=false;this.reason=null}
+ lock(reason){this.locked=true;this.reason=reason;return false}
+ unlock(){this.locked=false;this.reason=null;return true}
+ canAccept(paused=false,physicsActive=false){return !paused&&!this.locked&&!physicsActive}
+}
 
 const HOLE_START_FIELDS=['table','score','streak','totalStrokes','totalPar','results','inventory','activePower','ruleState','hybridPhase','strokes','holeIndex'];
 export function captureHoleStartState(game){return Object.fromEntries(HOLE_START_FIELDS.map(key=>[key,structuredClone(game[key])]))}
 export function restoreHoleStartState(game,snapshot){for(const key of HOLE_START_FIELDS)game[key]=structuredClone(snapshot[key]);return game}
 
 export class RoundTaskController{
- constructor(setTimer=setTimeout,clearTimer=clearTimeout){this.setTimer=setTimer;this.clearTimer=clearTimer;this.epoch=0;this.timers=new Set()}
+ constructor(setTimer=(callback,delay)=>setTimeout(callback,delay),clearTimer=timer=>clearTimeout(timer)){this.setTimer=setTimer;this.clearTimer=clearTimer;this.epoch=0;this.timers=new Set()}
  beginRound(){for(const timer of this.timers)this.clearTimer(timer);this.timers.clear();return++this.epoch}
  schedule(delay,callback){
   const epoch=this.epoch;let timer;
