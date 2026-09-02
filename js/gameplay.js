@@ -1,3 +1,5 @@
+import {CUSHION_REQUIREMENTS} from './game-config.js';
+
 export const MODES={
  golf:{label:'Table Golf',kind:'portal',competitive:false,tableChoice:true,description:'Conta tacadas até embocar. Escolhe portal móvel ou seis bolsas.'},
  classic:{label:'Bilhar de 3 bolas',kind:'classic',competitive:false,tableChoice:true,description:'A branca toca nas outras duas; em mesa snooker, as bolsas também contam.'},
@@ -40,8 +42,8 @@ export function trickPoints(attempts){return Math.max(100,1200-(attempts-1)*140)
 export function freshPowerInventory(){return Object.fromEntries(Object.keys(POWERS).map(key=>[key,1]))}
 export function evaluateTrick(trick,physics,contact){
  const scratch=physics.pocketed.includes(0),coloured=!scratch&&physics.pocketed.some(id=>id>0),carom=!scratch&&physics.contacts.size>=2;
- if(trick.requirement==='bank')return coloured&&physics.objectCushions>0;
- if(trick.requirement==='kick')return coloured&&physics.cueCushionsBeforeContact>0;
+ if(trick.requirement==='bank')return coloured&&physics.objectCushions>=CUSHION_REQUIREMENTS.bank;
+ if(trick.requirement==='kick')return coloured&&physics.cueCushionsBeforeContact>=CUSHION_REQUIREMENTS.kick;
  if(trick.requirement==='combo')return coloured&&physics.objectContacts>0;
  if(trick.requirement==='follow')return coloured&&contact.y<-.35;
  if(trick.requirement==='draw')return coloured&&contact.y>.35;
