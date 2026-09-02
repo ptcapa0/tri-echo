@@ -1,8 +1,7 @@
 import {clamp,len} from './math.js';
 import {Physics,PHYSICS_PROFILE,STEP} from './physics.js';
+import {SHOT_ENVELOPE} from './game-config.js';
 
-export const MAX_REQUIRED_CUSHIONS=3;
-const SAFETY_RESERVE_DIAMETERS=3;
 const SOLVER_TOLERANCE=.01;
 const POWER_EXPONENT=1.55;
 const cache=new Map();
@@ -13,7 +12,7 @@ function profileFor(table){return table.traditional?PHYSICS_PROFILE.traditional:
 export function legacyShotMetrics(table,legacyScale=1.03){
  const diameter=ballDiameter(table),bounds=table.bounds;
  const playableLong=Math.max(bounds.r-bounds.l,bounds.b-bounds.t)-diameter;
- const requiredReach=playableLong*MAX_REQUIRED_CUSHIONS+diameter*SAFETY_RESERVE_DIAMETERS;
+ const requiredReach=playableLong*SHOT_ENVELOPE.maxCushions+diameter*SHOT_ENVELOPE.reserveDiameters;
  return{maxSpeed:clamp(requiredReach*.88*legacyScale,2400,3300),requiredReach};
 }
 
@@ -57,10 +56,10 @@ export function simulateCushionEnvelope(table,initialSpeed){
 export function computeShotRequirement(table){
  const diameter=ballDiameter(table),bounds=table.bounds;
  const playableLong=Math.max(bounds.r-bounds.l,bounds.b-bounds.t)-diameter;
- const challengeDistance=playableLong*MAX_REQUIRED_CUSHIONS;
- const reserveDistance=diameter*SAFETY_RESERVE_DIAMETERS;
+ const challengeDistance=playableLong*SHOT_ENVELOPE.maxCushions;
+ const reserveDistance=diameter*SHOT_ENVELOPE.reserveDiameters;
  const safetyMargin=diameter/2;
- return{ballDiameter:diameter,playableLong,maxCushions:MAX_REQUIRED_CUSHIONS,challengeDistance,reserveDistance,safetyMargin,requiredReach:challengeDistance+reserveDistance+safetyMargin};
+ return{ballDiameter:diameter,playableLong,maxCushions:SHOT_ENVELOPE.maxCushions,challengeDistance,reserveDistance,safetyMargin,requiredReach:challengeDistance+reserveDistance+safetyMargin};
 }
 
 function satisfies(measurement,requirement){return measurement.cushions>=requirement.maxCushions&&measurement.distance>=requirement.requiredReach}

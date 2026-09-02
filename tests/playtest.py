@@ -133,8 +133,8 @@ with sync_playwright() as p:
             assert page.locator(".power").count() == 0
         if name == "iphone":
             assert page.evaluate("navigator.serviceWorker.ready.then(() => true)")
-            assert "tri-echo-v4.3.0" in page.request.get(f"{ROOT}/sw.js").text()
-            assert "tri-echo-v4.3.0" in page.evaluate("caches.keys()")
+            assert "tri-echo-v4.3.1" in page.request.get(f"{ROOT}/sw.js").text()
+            assert "tri-echo-v4.3.1" in page.evaluate("caches.keys()")
             page.evaluate("caches.open('playtest-unrelated-cache')")
             page.evaluate("navigator.serviceWorker.getRegistration().then(registration => registration.unregister())")
             page.reload(wait_until="networkidle")
@@ -147,7 +147,7 @@ with sync_playwright() as p:
             page.context.set_offline(False)
         page.close()
 
-    # Relative CSS-space pulls produce the same effective power on supported phones.
+    # Floating Pull is translation-invariant across comfortable mobile origins.
     gesture_results = {}
     for name, viewport in [("iphone", {"width": 390, "height": 844}), ("android", {"width": 412, "height": 915}), ("wide-android", {"width": 430, "height": 932})]:
         page = browser.new_page(viewport=viewport, device_scale_factor=1)
@@ -158,38 +158,121 @@ with sync_playwright() as p:
         page.locator("#playBtn").click()
         box = page.locator("#game").bounding_box()
         state = page.evaluate("window.__TRI_ECHO__.state()")
-        x = box["x"] + box["width"] * state["cue"]["x"]
-        y = box["y"] + box["height"] * state["cue"]["y"]
-        spaces = [
-            (x-box["x"]-20, -1, 0),
-            (box["x"]+box["width"]-x-20, 1, 0),
-            (y-box["y"]-20, 0, -1),
-            (box["y"]+box["height"]-y-20, 0, 1),
-        ]
-        _, dx, dy = max(spaces, key=lambda item: item[0])
-        samples = []
-        for index, fraction in enumerate((.25, .5, .75, 1)):
-            pull = state["fullPullCss"] * fraction
-            pointer_id = 120 + index
-            page.dispatch_event("#game", "pointerdown", {"pointerId": pointer_id, "clientX": x, "clientY": y})
-            page.dispatch_event("#game", "pointermove", {"pointerId": pointer_id, "clientX": x+dx*pull, "clientY": y+dy*pull})
-            aim = page.evaluate("window.__TRI_ECHO__.state()")
-            samples.append((aim["normalizedPower"], aim["shotSpeed"]))
-            assert abs(aim["shotSpeed"] - aim["normalizedPower"] * aim["maxSpeed"]) < 1e-6
-            page.dispatch_event("#game", "pointercancel", {"pointerId": pointer_id, "clientX": x+dx*pull, "clientY": y+dy*pull})
-        assert all(samples[i][0] < samples[i+1][0] for i in range(3))
-        assert samples[-1][0] > .999
+        origins = {
+            "center": (.50, .50, 1),
+            "bottom-left": (.24, .78, 1),
+            "bottom-right": (.76, .78, -1),
+        }
+        viewport_results = {}
+        for origin_index, (origin_name, (rx, ry, dx)) in enumerate(origins.items()):
+            x = box["x"] + box["width"] * rx
+            y = box["y"] + box["height"] * ry
+            samples = []
+            for index, fraction in enumerate((.25, .5, .75, 1)):
+                pull = state["fullPullCss"] * fraction
+                pointer_id = 120 + origin_index * 10 + index
+                page.dispatch_event("#game", "pointerdown", {"pointerId": pointer_id, "clientX": x, "clientY": y})
+                started = page.evaluate("window.__TRI_ECHO__.state()")
+                assert started["dragActive"] is True
+                assert abs(started["pullOriginScreen"]["x"] - x) < 1e-6
+                assert abs(started["pullOriginScreen"]["y"] - y) < 1e-6
+                page.dispatch_event("#game", "pointermove", {"pointerId": pointer_id, "clientX": x+dx*pull, "clientY": y})
+                aim = page.evaluate("window.__TRI_ECHO__.state()")
+                samples.append((aim["normalizedPower"], aim["shotSpeed"]))
+                assert abs(aim["shotSpeed"] - aim["normalizedPower"] * aim["maxSpeed"]) < 1e-6
+                if name == "android" and origin_name == "bottom-left" and fraction == .75:
+                    page.screenshot(path=str(OUT / "android-floating-pull.png"), full_page=True)
+                page.dispatch_event("#game", "pointercancel", {"pointerId": pointer_id, "clientX": x+dx*pull, "clientY": y})
+            assert all(samples[i][0] < samples[i+1][0] for i in range(3))
+            assert samples[-1][0] > .999
+            viewport_results[origin_name] = samples
+        for index in range(4):
+            translated = [samples[index][0] for samples in viewport_results.values()]
+            assert max(translated) - min(translated) < 1e-9, translated
+        cue_x = box["x"] + box["width"] * state["cue"]["x"]
+        cue_y = box["y"] + box["height"] * state["cue"]["y"]
+        page.dispatch_event("#game", "pointerdown", {"pointerId": 160, "clientX": cue_x, "clientY": cue_y})
+        assert page.evaluate("window.__TRI_ECHO__.state().dragActive") is True
+        page.dispatch_event("#game", "pointercancel", {"pointerId": 160, "clientX": cue_x, "clientY": cue_y})
+        object_ball = state["ballState"][1]
+        object_x = box["x"] + box["width"] * object_ball["x"] / state["tableWidth"]
+        object_y = box["y"] + box["height"] * object_ball["y"] / state["tableHeight"]
+        page.dispatch_event("#game", "pointerdown", {"pointerId": 161, "clientX": object_x, "clientY": object_y})
+        assert page.evaluate("window.__TRI_ECHO__.state().dragActive") is True
+        page.dispatch_event("#game", "pointercancel", {"pointerId": 161, "clientX": object_x, "clientY": object_y})
+        x = box["x"] + box["width"] * .5
+        y = box["y"] + box["height"] * .5
         dead_pull = state["deadZoneCss"] * .8
         page.dispatch_event("#game", "pointerdown", {"pointerId": 130, "clientX": x, "clientY": y})
-        page.dispatch_event("#game", "pointermove", {"pointerId": 130, "clientX": x+dx*dead_pull, "clientY": y+dy*dead_pull})
-        page.dispatch_event("#game", "pointerup", {"pointerId": 130, "clientX": x+dx*dead_pull, "clientY": y+dy*dead_pull})
+        page.dispatch_event("#game", "pointermove", {"pointerId": 130, "clientX": x+dead_pull, "clientY": y})
+        page.dispatch_event("#game", "pointerup", {"pointerId": 130, "clientX": x+dead_pull, "clientY": y})
         assert page.evaluate("window.__TRI_ECHO__.state().strokes") == 0
-        gesture_results[name] = samples
+        gesture_results[name] = viewport_results["center"]
         assert errors == [], errors
         page.close()
     for index in range(4):
         powers = [samples[index][0] for samples in gesture_results.values()]
         assert max(powers) - min(powers) < .02, powers
+
+    # A deterministic edge cue no longer constrains full power: the control
+    # origin can be moved to a comfortable part of the table.
+    for edge in ("left", "top"):
+        finder = browser.new_page(viewport={"width": 412, "height": 915})
+        finder.goto(ROOT, wait_until="networkidle")
+        finder.locator("#playBtn").click()
+        dimensions = finder.evaluate("window.__TRI_ECHO__.state()")
+        seed_base = finder.evaluate("""async ({edge, width, height}) => {
+            const {generateTable} = await import('./js/generator.js');
+            for (let base = 1; base < 20000; base++) {
+                const seed = (base + Math.imul(1, 2654435761)) >>> 0;
+                const table = generateTable(seed, 'normal', 0, width, height, {
+                    tableStyle: 'echo', ballSet: 'three', traditional: false
+                });
+                const cue = table.balls[0];
+                if (edge === 'left' && cue.x / width < .14) return base;
+                if (edge === 'top' && cue.y / height < .10) return base;
+            }
+            return null;
+        }""", {"edge": edge, "width": dimensions["tableWidth"], "height": dimensions["tableHeight"]})
+        finder.close()
+        assert seed_base is not None, f"no deterministic {edge} edge seed found"
+
+        page = browser.new_page(viewport={"width": 412, "height": 915})
+        errors = []
+        page.on("console", lambda msg: errors.append(msg.text) if msg.type == "error" else None)
+        page.on("pageerror", lambda err: errors.append(str(err)))
+        page.add_init_script(f"Date.now=()=>{seed_base}")
+        page.goto(ROOT, wait_until="networkidle")
+        page.locator("#playBtn").click()
+        box = page.locator("#game").bounding_box()
+        state = page.evaluate("window.__TRI_ECHO__.state()")
+        if edge == "left":
+            assert box["width"] * state["cue"]["x"] < state["fullPullCss"]
+            origin = (box["x"] + box["width"] * .72, box["y"] + box["height"] * .55)
+            delta = (-state["fullPullCss"] - 2, 0)
+            direction_key, direction_sign = "x", 1
+        else:
+            assert box["height"] * state["cue"]["y"] < state["fullPullCss"]
+            origin = (box["x"] + box["width"] * .52, box["y"] + box["height"] * .48)
+            delta = (0, -state["fullPullCss"] - 2)
+            direction_key, direction_sign = "y", 1
+        current = (origin[0] + delta[0], origin[1] + delta[1])
+        cue_screen = (box["x"] + box["width"] * state["cue"]["x"], box["y"] + box["height"] * state["cue"]["y"])
+        assert ((origin[0]-cue_screen[0])**2 + (origin[1]-cue_screen[1])**2)**.5 > 60
+        page.dispatch_event("#game", "pointerdown", {"pointerId": 170, "clientX": origin[0], "clientY": origin[1]})
+        page.dispatch_event("#game", "pointermove", {"pointerId": 170, "clientX": current[0], "clientY": current[1]})
+        aimed = page.evaluate("window.__TRI_ECHO__.state()")
+        assert aimed["normalizedPower"] == 1
+        assert aimed["shotDirection"][direction_key] * direction_sign > .999
+        if edge == "left":
+            page.screenshot(path=str(OUT / "android-edge-cue-floating-full-power.png"), full_page=True)
+        page.dispatch_event("#game", "pointerup", {"pointerId": 170, "clientX": current[0], "clientY": current[1]})
+        page.wait_for_function("window.__TRI_ECHO__.state().strokes === 1")
+        released = page.evaluate("window.__TRI_ECHO__.state()")
+        assert abs(released["lastShotSpeed"] - released["maxSpeed"]) < 1e-6
+        assert released["lastShotDirection"][direction_key] * direction_sign > .999
+        assert errors == [], errors
+        page.close()
 
     # New v4 modes and table variants
     page = browser.new_page(viewport={"width": 412, "height": 915})

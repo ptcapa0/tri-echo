@@ -6,7 +6,7 @@ Cada modo original pode usar a Mesa Echo com portal móvel ou uma mesa de snooke
 
 O controlo circular **IMPACTO** é independente da mira e pode ser arrastado pela pega **MOVER**, libertando qualquer zona importante da mesa. Move o ponto para cima para seguimento, para baixo para recuo ou para os lados para efeito lateral.
 
-A potência adapta-se às dimensões da mesa através da própria simulação: o máximo é a menor velocidade que garante três comprimentos úteis, três diâmetros de reserva e margem de segurança. A força usa a distância do dedo em píxeis CSS, é igual entre dificuldades e cresce continuamente desde zero para permitir jogadas de precisão.
+A potência adapta-se às dimensões da mesa através da própria simulação: o máximo é a menor velocidade que garante três comprimentos úteis, três diâmetros de reserva e margem de segurança. Com **Floating Pull**, o gesto pode começar em qualquer ponto jogável da mesa; a tacada segue na direção oposta ao arrasto e a distância do dedo em píxeis CSS determina sempre a mesma força, independentemente da posição da branca. Tocar diretamente na branca continua válido.
 
 ## Jogar localmente
 

@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {generateTable} from '../js/generator.js';
 import {Physics,PHYSICS_PROFILE,STEP} from '../js/physics.js';
+import {SHOT_ENVELOPE} from '../js/game-config.js';
 import {
- MAX_REQUIRED_CUSHIONS,
  calibrateShot,
  computeGestureMetrics,
  computeShotRequirement,
@@ -30,8 +30,8 @@ test('stopping distance and time grow monotonically with initial speed',()=>{
 
 test('cushion characterization records real energy loss at every rail',()=>{
  const result=simulateCushionEnvelope(cleanTable(),2000);
- assert.ok(result.cushionEvents.length>=MAX_REQUIRED_CUSHIONS);
- for(const event of result.cushionEvents.slice(0,MAX_REQUIRED_CUSHIONS)){
+ assert.ok(result.cushionEvents.length>=SHOT_ENVELOPE.maxCushions);
+ for(const event of result.cushionEvents.slice(0,SHOT_ENVELOPE.maxCushions)){
   assert.ok(event.speedAfter<event.speedBefore);
   assert.ok(event.retained>0&&event.retained<1);
  }
@@ -39,9 +39,9 @@ test('cushion characterization records real energy loss at every rail',()=>{
 
 test('shot requirement includes the supported challenge and three-diameter reserve',()=>{
  const requirement=computeShotRequirement(cleanTable());
- assert.equal(requirement.maxCushions,MAX_REQUIRED_CUSHIONS);
- assert.equal(requirement.reserveDistance,requirement.ballDiameter*3);
- assert.ok(requirement.challengeDistance>=requirement.playableLong*MAX_REQUIRED_CUSHIONS);
+ assert.equal(requirement.maxCushions,SHOT_ENVELOPE.maxCushions);
+ assert.equal(requirement.reserveDistance,requirement.ballDiameter*SHOT_ENVELOPE.reserveDiameters);
+ assert.ok(requirement.challengeDistance>=requirement.playableLong*SHOT_ENVELOPE.maxCushions);
  assert.ok(requirement.requiredReach>=requirement.challengeDistance+requirement.reserveDistance);
 });
 
