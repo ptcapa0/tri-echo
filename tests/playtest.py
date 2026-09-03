@@ -41,6 +41,19 @@ def take_velocity_shot(page, velocity, pointer_id=89):
     page.dispatch_event("#game", "pointermove", {"pointerId": pointer_id, "clientX": x+dx, "clientY": y+dy})
     page.dispatch_event("#game", "pointerup", {"pointerId": pointer_id, "clientX": x+dx, "clientY": y+dy})
 
+def begin_floating_pull(page, pointer_id, pull_fraction=.75):
+    box = page.locator("#game").bounding_box()
+    state = page.evaluate("window.__TRI_ECHO__.state()")
+    origin = (box["x"] + box["width"] * .42, box["y"] + box["height"] * .58)
+    current = (origin[0] + state["fullPullCss"] * pull_fraction, origin[1])
+    page.dispatch_event("#game", "pointerdown", {
+        "pointerId": pointer_id, "clientX": origin[0], "clientY": origin[1]
+    })
+    page.dispatch_event("#game", "pointermove", {
+        "pointerId": pointer_id, "clientX": current[0], "clientY": current[1]
+    })
+    return origin, current, page.evaluate("window.__TRI_ECHO__.state()")
+
 with sync_playwright() as p:
     browser = p.chromium.launch(headless=True)
     for name, viewport in [("iphone", {"width": 390, "height": 844}), ("android", {"width": 412, "height": 915}), ("wide-android", {"width": 430, "height": 932}), ("desktop", {"width": 1024, "height": 800})]:
@@ -133,8 +146,8 @@ with sync_playwright() as p:
             assert page.locator(".power").count() == 0
         if name == "iphone":
             assert page.evaluate("navigator.serviceWorker.ready.then(() => true)")
-            assert "tri-echo-v4.3.1" in page.request.get(f"{ROOT}/sw.js").text()
-            assert "tri-echo-v4.3.1" in page.evaluate("caches.keys()")
+            assert "tri-echo-v4.3.2" in page.request.get(f"{ROOT}/sw.js").text()
+            assert "tri-echo-v4.3.2" in page.evaluate("caches.keys()")
             page.evaluate("caches.open('playtest-unrelated-cache')")
             page.evaluate("navigator.serviceWorker.getRegistration().then(registration => registration.unregister())")
             page.reload(wait_until="networkidle")
@@ -216,7 +229,7 @@ with sync_playwright() as p:
 
     # A deterministic edge cue no longer constrains full power: the control
     # origin can be moved to a comfortable part of the table.
-    for edge in ("left", "top"):
+    for edge in ("left", "right", "top", "bottom"):
         finder = browser.new_page(viewport={"width": 412, "height": 915})
         finder.goto(ROOT, wait_until="networkidle")
         finder.locator("#playBtn").click()
@@ -230,7 +243,9 @@ with sync_playwright() as p:
                 });
                 const cue = table.balls[0];
                 if (edge === 'left' && cue.x / width < .14) return base;
+                if (edge === 'right' && cue.x / width > .86) return base;
                 if (edge === 'top' && cue.y / height < .10) return base;
+                if (edge === 'bottom' && cue.y / height > .90) return base;
             }
             return null;
         }""", {"edge": edge, "width": dimensions["tableWidth"], "height": dimensions["tableHeight"]})
@@ -251,11 +266,21 @@ with sync_playwright() as p:
             origin = (box["x"] + box["width"] * .72, box["y"] + box["height"] * .55)
             delta = (-state["fullPullCss"] - 2, 0)
             direction_key, direction_sign = "x", 1
-        else:
+        elif edge == "right":
+            assert box["width"] * (1 - state["cue"]["x"]) < state["fullPullCss"]
+            origin = (box["x"] + box["width"] * .28, box["y"] + box["height"] * .55)
+            delta = (state["fullPullCss"] + 2, 0)
+            direction_key, direction_sign = "x", -1
+        elif edge == "top":
             assert box["height"] * state["cue"]["y"] < state["fullPullCss"]
             origin = (box["x"] + box["width"] * .52, box["y"] + box["height"] * .48)
             delta = (0, -state["fullPullCss"] - 2)
             direction_key, direction_sign = "y", 1
+        else:
+            assert box["height"] * (1 - state["cue"]["y"]) < state["fullPullCss"]
+            origin = (box["x"] + box["width"] * .52, box["y"] + box["height"] * .42)
+            delta = (0, state["fullPullCss"] + 2)
+            direction_key, direction_sign = "y", -1
         current = (origin[0] + delta[0], origin[1] + delta[1])
         cue_screen = (box["x"] + box["width"] * state["cue"]["x"], box["y"] + box["height"] * state["cue"]["y"])
         assert ((origin[0]-cue_screen[0])**2 + (origin[1]-cue_screen[1])**2)**.5 > 60
@@ -264,8 +289,8 @@ with sync_playwright() as p:
         aimed = page.evaluate("window.__TRI_ECHO__.state()")
         assert aimed["normalizedPower"] == 1
         assert aimed["shotDirection"][direction_key] * direction_sign > .999
-        if edge == "left":
-            page.screenshot(path=str(OUT / "android-edge-cue-floating-full-power.png"), full_page=True)
+        if edge in ("left", "right", "bottom"):
+            page.screenshot(path=str(OUT / f"android-{edge}-edge-full-power.png"), full_page=True)
         page.dispatch_event("#game", "pointerup", {"pointerId": 170, "clientX": current[0], "clientY": current[1]})
         page.wait_for_function("window.__TRI_ECHO__.state().strokes === 1")
         released = page.evaluate("window.__TRI_ECHO__.state()")
@@ -379,13 +404,136 @@ with sync_playwright() as p:
     page.dispatch_event("#game", "pointerdown", {"pointerId": 77, "clientX": x, "clientY": y})
     page.dispatch_event("#game", "pointermove", {"pointerId": 77, "clientX": x + 120, "clientY": y})
     page.dispatch_event("#game", "pointercancel", {"pointerId": 77, "clientX": x + 120, "clientY": y})
-    assert page.evaluate("window.__TRI_ECHO__.state().strokes") == 0
-    page.mouse.move(x, y)
-    page.mouse.down()
-    page.mouse.move(x + 150, y, steps=5)
-    page.mouse.up()
+    cancelled = page.evaluate("window.__TRI_ECHO__.state()")
+    assert cancelled["strokes"] == 0
+    assert cancelled["activeGameplayPointerId"] is None
+    _, current, reacquired = begin_floating_pull(page, 78, .6)
+    assert reacquired["activeGameplayPointerId"] == 78
+    page.dispatch_event("#game", "pointerup", {"pointerId": 78, "clientX": current[0], "clientY": current[1]})
     page.wait_for_function("window.__TRI_ECHO__.state().strokes === 1")
     assert page.evaluate("window.__TRI_ECHO__.state().strokes") == 1
+    page.close()
+
+    # Floating Pull has one pointer owner. A second touch cannot replace,
+    # mutate, fire, or cancel the first touch's gesture.
+    page = browser.new_page(viewport={"width": 412, "height": 915})
+    errors = []
+    page.on("console", lambda msg: errors.append(msg.text) if msg.type == "error" else None)
+    page.on("pageerror", lambda err: errors.append(str(err)))
+    page.add_init_script("""
+        Object.defineProperty(navigator, 'vibrate', {
+            configurable: true,
+            value: pattern => { (window.__playtestVibrations ||= []).push(pattern); return true; }
+        });
+    """)
+    page.goto(ROOT, wait_until="networkidle")
+    page.locator("#playBtn").click()
+    owner_origin, owner_current, owner_state = begin_floating_pull(page, 201)
+    assert owner_state["dragActive"] is True
+    assert owner_state["normalizedPower"] > .55
+    vibration_count = page.evaluate("(window.__playtestVibrations || []).length")
+    strokes = owner_state["strokes"]
+    last_speed = owner_state["lastShotSpeed"]
+
+    page.dispatch_event("#game", "pointerdown", {
+        "pointerId": 202, "clientX": owner_origin[0] - 80, "clientY": owner_origin[1] - 100
+    })
+    after_secondary_down = page.evaluate("window.__TRI_ECHO__.state()")
+    assert after_secondary_down["pullOriginScreen"] == owner_state["pullOriginScreen"]
+    assert after_secondary_down["pullCurrentScreen"] == owner_state["pullCurrentScreen"]
+    assert after_secondary_down["normalizedPower"] == owner_state["normalizedPower"]
+    assert after_secondary_down["shotDirection"] == owner_state["shotDirection"]
+    assert after_secondary_down["activeGameplayPointerId"] == 201
+    assert after_secondary_down["dragPointerId"] == 201
+
+    page.dispatch_event("#game", "pointermove", {
+        "pointerId": 202, "clientX": owner_origin[0] - 160, "clientY": owner_origin[1] + 130
+    })
+    after_secondary_move = page.evaluate("window.__TRI_ECHO__.state()")
+    for key in ("pullOriginScreen", "pullCurrentScreen", "normalizedPower", "shotDirection"):
+        assert after_secondary_move[key] == owner_state[key]
+    assert page.evaluate("(window.__playtestVibrations || []).length") == vibration_count
+
+    page.dispatch_event("#game", "pointerup", {
+        "pointerId": 202, "clientX": owner_origin[0] - 160, "clientY": owner_origin[1] + 130
+    })
+    after_secondary_up = page.evaluate("window.__TRI_ECHO__.state()")
+    assert after_secondary_up["activeGameplayPointerId"] == 201
+    assert after_secondary_up["dragActive"] is True
+    assert after_secondary_up["active"] is False
+    assert after_secondary_up["strokes"] == strokes
+    assert after_secondary_up["lastShotSpeed"] == last_speed
+    page.screenshot(path=str(OUT / "android-secondary-pointer-ignored.png"), full_page=True)
+
+    page.dispatch_event("#game", "pointerup", {
+        "pointerId": 201, "clientX": owner_current[0], "clientY": owner_current[1]
+    })
+    page.wait_for_function(f"window.__TRI_ECHO__.state().strokes === {strokes + 1}")
+    released = page.evaluate("window.__TRI_ECHO__.state()")
+    assert released["activeGameplayPointerId"] is None
+    assert abs(released["lastNormalizedPower"] - owner_state["normalizedPower"]) < 1e-9
+    assert abs(released["lastShotSpeed"] - owner_state["shotSpeed"]) < 1e-6
+    assert errors == [], errors
+    page.close()
+
+    # Secondary cancellation/lost-capture events leave the owner intact.
+    page = browser.new_page(viewport={"width": 412, "height": 915})
+    page.goto(ROOT, wait_until="networkidle")
+    page.locator("#playBtn").click()
+    owner_origin, owner_current, owner_state = begin_floating_pull(page, 211)
+    page.dispatch_event("#game", "pointerdown", {
+        "pointerId": 212, "clientX": owner_origin[0] - 70, "clientY": owner_origin[1] - 70
+    })
+    page.dispatch_event("#game", "pointercancel", {"pointerId": 212})
+    after_secondary_cancel = page.evaluate("window.__TRI_ECHO__.state()")
+    assert after_secondary_cancel["activeGameplayPointerId"] == 211
+    assert after_secondary_cancel["normalizedPower"] == owner_state["normalizedPower"]
+    page.dispatch_event("#game", "lostpointercapture", {"pointerId": 212})
+    after_secondary_lost = page.evaluate("window.__TRI_ECHO__.state()")
+    assert after_secondary_lost["activeGameplayPointerId"] == 211
+    assert after_secondary_lost["normalizedPower"] == owner_state["normalizedPower"]
+    page.dispatch_event("#game", "pointerup", {
+        "pointerId": 211, "clientX": owner_current[0], "clientY": owner_current[1]
+    })
+    page.wait_for_function("window.__TRI_ECHO__.state().strokes === 1")
+    page.close()
+
+    # Cancelling the owner never shoots and releases ownership for a new pointer.
+    page = browser.new_page(viewport={"width": 412, "height": 915})
+    page.goto(ROOT, wait_until="networkidle")
+    page.locator("#playBtn").click()
+    _, owner_current, _ = begin_floating_pull(page, 221)
+    page.dispatch_event("#game", "pointercancel", {
+        "pointerId": 221, "clientX": owner_current[0], "clientY": owner_current[1]
+    })
+    cancelled = page.evaluate("window.__TRI_ECHO__.state()")
+    assert cancelled["activeGameplayPointerId"] is None
+    assert cancelled["dragActive"] is False
+    assert cancelled["strokes"] == 0
+    assert cancelled["active"] is False
+    _, next_current, next_state = begin_floating_pull(page, 222, .6)
+    assert next_state["activeGameplayPointerId"] == 222
+    page.dispatch_event("#game", "pointerup", {
+        "pointerId": 222, "clientX": next_current[0], "clientY": next_current[1]
+    })
+    page.wait_for_function("window.__TRI_ECHO__.state().strokes === 1")
+    page.close()
+
+    # Lost capture from the owner also cancels without a shot and permits reacquire.
+    page = browser.new_page(viewport={"width": 412, "height": 915})
+    page.goto(ROOT, wait_until="networkidle")
+    page.locator("#playBtn").click()
+    begin_floating_pull(page, 231)
+    page.dispatch_event("#game", "lostpointercapture", {"pointerId": 231})
+    lost = page.evaluate("window.__TRI_ECHO__.state()")
+    assert lost["activeGameplayPointerId"] is None
+    assert lost["dragActive"] is False
+    assert lost["strokes"] == 0
+    assert lost["active"] is False
+    begin_floating_pull(page, 232, .5)
+    reacquired = page.evaluate("window.__TRI_ECHO__.state()")
+    assert reacquired["activeGameplayPointerId"] == 232
+    page.dispatch_event("#game", "pointercancel", {"pointerId": 232})
     page.close()
 
     # UI restart restores the observable hole-start state after a real shot.
@@ -463,6 +611,7 @@ with sync_playwright() as p:
     assert blocked["totalStrokes"] == locked["totalStrokes"]
     assert blocked["holeIndex"] == 1
     assert blocked["dragActive"] is False
+    assert blocked["activeGameplayPointerId"] is None
     page.screenshot(path=str(OUT / "android-success-transition-locked.png"), full_page=True)
     page.wait_for_function("window.__TRI_ECHO__.state().holeIndex === 1 && window.__TRI_ECHO__.state().strokes === 0 && window.__TRI_ECHO__.state().canAcceptGameplayInput", timeout=5000)
     assert page.evaluate("window.__TRI_ECHO__.state().interactionLocked") is False
@@ -500,6 +649,7 @@ with sync_playwright() as p:
     assert still_locked["totalStrokes"] == locked["totalStrokes"]
     assert still_locked["roundEpoch"] == epoch
     assert still_locked["dragActive"] is False
+    assert still_locked["activeGameplayPointerId"] is None
     page.screenshot(path=str(OUT / "android-transition-locked.png"), full_page=True)
     page.wait_for_function("window.__TRI_ECHO__.state().canAcceptGameplayInput === true", timeout=5000)
     ready = page.evaluate("window.__TRI_ECHO__.state()")
