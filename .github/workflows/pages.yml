@@ -32,6 +32,9 @@ jobs:
       - name: Run unit and build tests
         run: npm test
 
+      - name: Stress-test collision integrity
+        run: npm run physics:collisions -- --seed 1337 --cases 10000
+
       - name: Build production client
         run: npm run build
 
