@@ -146,8 +146,8 @@ with sync_playwright() as p:
             assert page.locator(".power").count() == 0
         if name == "iphone":
             assert page.evaluate("navigator.serviceWorker.ready.then(() => true)")
-            assert "tri-echo-v4.3.2" in page.request.get(f"{ROOT}/sw.js").text()
-            assert "tri-echo-v4.3.2" in page.evaluate("caches.keys()")
+            assert "tri-echo-v4.4.0" in page.request.get(f"{ROOT}/sw.js").text()
+            assert "tri-echo-v4.4.0" in page.evaluate("caches.keys()")
             page.evaluate("caches.open('playtest-unrelated-cache')")
             page.evaluate("navigator.serviceWorker.getRegistration().then(registration => registration.unregister())")
             page.reload(wait_until="networkidle")
@@ -659,6 +659,42 @@ with sync_playwright() as p:
     ready_strokes = ready["strokes"]
     take_short_shot(page)
     page.wait_for_function(f"window.__TRI_ECHO__.state().strokes === {ready_strokes + 1}")
+    assert errors == [], errors
+    page.close()
+
+    # Production-bundle integration covers each solid collider family with
+    # diagnostic events while preserving finite, playable state.
+    page = browser.new_page(viewport={"width": 412, "height": 915})
+    errors = []
+    page.on("console", lambda msg: errors.append(msg.text) if msg.type == "error" else None)
+    page.on("pageerror", lambda err: errors.append(str(err)))
+    page.goto(ROOT, wait_until="networkidle")
+    collision_integration = page.evaluate("""async () => {
+        const {Physics, STEP} = await import('./js/physics.js');
+        const ball = (id, x, y, vx = 0, vy = 0, r = 18) => ({id, x, y, vx, vy, r, pocketed: false, spinX: 0, spinY: 0});
+        const make = (balls, extra = {}) => ({w: 600, h: 400, bounds: {l: 0, r: 600, t: 0, b: 400}, traditional: false, balls, obstacles: [], rails: [], frictionZone: null, pockets: [], hole: null, ...extra});
+        const scenarios = [
+            make([ball(0, 160, 200, 2400, 0), ball(1, 220, 200)]),
+            make([ball(0, 180, 200, 2400, 0)], {obstacles: [{x: 230, y: 200, r: 26}]}),
+            make([ball(0, 260, 160, 0, 2400)], {rails: [{a: {x: 160, y: 200}, b: {x: 360, y: 200}}]}),
+            make([ball(0, 20, 200, -2400, 0)])
+        ];
+        const expected = ['BALL_BALL', 'BUMPER', 'ECHO_RAIL', 'CUSHION'];
+        return scenarios.map((table, index) => {
+            const physics = new Physics(table, {diagnostics: true});
+            physics.active = true;
+            for (let step = 0; step < 8 && !physics.collisionEvents.some(event => event.type === expected[index]); step++) physics.step(STEP);
+            return {
+                expected: expected[index],
+                observed: physics.collisionEvents.map(event => event.type),
+                finite: table.balls.every(ball => [ball.x, ball.y, ball.vx, ball.vy].every(Number.isFinite)),
+                bounded: physics.diagnostics.maxInternalSubsteps <= 16
+            };
+        });
+    }""")
+    assert all(row["expected"] in row["observed"] and row["finite"] and row["bounded"] for row in collision_integration), collision_integration
+    page.locator("#playBtn").click()
+    page.screenshot(path=str(OUT / "android-collision-integrity.png"), full_page=True)
     assert errors == [], errors
     page.close()
 
