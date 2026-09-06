@@ -1,5 +1,5 @@
 const CACHE_PREFIX='tri-echo-';
-const CACHE='tri-echo-v4.3.2';
+const CACHE='tri-echo-v4.4.0';
 const FILES=[
  './','./index.html','./style.css','./manifest.webmanifest',
  './assets/icon.svg','./assets/icon-192.png','./assets/icon-512.png',

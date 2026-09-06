@@ -18,7 +18,7 @@ Em ambientes com botão de pré-visualização, seleciona a pasta `tri-echo` com
 
 O servidor não instala pacotes nem usa dependências externas. Se a porta 8080 estiver ocupada, usa `PORT=8090 npm run dev`.
 
-Testes: `npm test` (apenas Node.js moderno; não instala pacotes). Cria o artefacto de produção com `npm run build`. O relatório quantitativo de potência é `npm run physics:report`. Para o smoke test no artefacto, serve `dist/client` em `http://127.0.0.1:8080` e executa `python3 tests/playtest.py` (requer Playwright e Chromium).
+Testes: `npm test` (apenas Node.js moderno; não instala pacotes). Cria o artefacto de produção com `npm run build`. O relatório quantitativo de potência é `npm run physics:report`; o stress determinístico de colisões é `npm run physics:collisions -- --seed 1337 --cases 10000`, imprimindo seed e caso reproduzível quando encontra uma falha. Para o smoke test no artefacto, serve `dist/client` em `http://127.0.0.1:8080` e executa `python3 tests/playtest.py` (requer Playwright e Chromium).
 
 ## Instalar no telemóvel
 
