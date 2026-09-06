@@ -8,6 +8,8 @@ O controlo circular **IMPACTO** é independente da mira e pode ser arrastado pel
 
 A potência adapta-se às dimensões da mesa através da própria simulação: o máximo é a menor velocidade que garante três comprimentos úteis, três diâmetros de reserva e margem de segurança. Com **Floating Pull**, o gesto pode começar em qualquer ponto jogável da mesa; a tacada segue na direção oposta ao arrasto e a distância do dedo em píxeis CSS determina sempre a mesma força, independentemente da posição da branca. Tocar diretamente na branca continua válido.
 
+Na versão 4.5, as modalidades tradicionais usam bocas, jaws e prateleiras físicas: a bola atravessa uma abertura real antes da captura. Pool, Snooker e Classic têm perfis próprios; o Portal Echo e as bolsas arcade mantêm o magnetismo. [Contrato e medições do PR3.1](docs/PR3.1-traditional-pocket-geometry.md).
+
 ## Jogar localmente
 
 1. Abre um terminal nesta pasta.
@@ -18,7 +20,7 @@ Em ambientes com botão de pré-visualização, seleciona a pasta `tri-echo` com
 
 O servidor não instala pacotes nem usa dependências externas. Se a porta 8080 estiver ocupada, usa `PORT=8090 npm run dev`.
 
-Testes: `npm test` (apenas Node.js moderno; não instala pacotes). Cria o artefacto de produção com `npm run build`. O relatório quantitativo de potência é `npm run physics:report`; o stress determinístico de colisões é `npm run physics:collisions -- --seed 1337 --cases 10000`, imprimindo seed e caso reproduzível quando encontra uma falha. Para o smoke test no artefacto, serve `dist/client` em `http://127.0.0.1:8080` e executa `python3 tests/playtest.py` (requer Playwright e Chromium).
+Testes: `npm test` (apenas Node.js moderno; não instala pacotes). Cria o artefacto de produção com `npm run build`. O relatório quantitativo de potência é `npm run physics:report`; o stress determinístico de colisões é `npm run physics:collisions -- --seed 1337 --cases 10000`, imprimindo seed e caso reproduzível quando encontra uma falha. O stress de bolsas é `npm run physics:pockets -- --seed 1337 --cases 10000`, com janelas de aceitação e métricas de captura, rattle, integridade e racks de 16/22 bolas. Para o smoke test no artefacto, serve `dist/client` em `http://127.0.0.1:8080` e executa `python3 tests/playtest.py` (requer Playwright e Chromium).
 
 ## Instalar no telemóvel
 

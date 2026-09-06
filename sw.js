@@ -1,10 +1,10 @@
 const CACHE_PREFIX='tri-echo-';
-const CACHE='tri-echo-v4.4.0';
+const CACHE='tri-echo-v4.5.0';
 const FILES=[
  './','./index.html','./style.css','./manifest.webmanifest',
  './assets/icon.svg','./assets/icon-192.png','./assets/icon-512.png',
  './js/app.js','./js/audio.js','./js/generator.js','./js/math.js',
- './js/physics.js','./js/physics-calibration.js','./js/floating-pull.js','./js/game-config.js',
+ './js/pocket-geometry.js','./js/physics.js','./js/physics-calibration.js','./js/floating-pull.js','./js/game-config.js',
  './js/pointer-ownership.js','./js/storage.js','./js/gameplay.js','./js/rules.js'
 ];
 

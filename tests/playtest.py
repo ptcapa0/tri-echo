@@ -146,8 +146,8 @@ with sync_playwright() as p:
             assert page.locator(".power").count() == 0
         if name == "iphone":
             assert page.evaluate("navigator.serviceWorker.ready.then(() => true)")
-            assert "tri-echo-v4.4.0" in page.request.get(f"{ROOT}/sw.js").text()
-            assert "tri-echo-v4.4.0" in page.evaluate("caches.keys()")
+            assert "tri-echo-v4.5.0" in page.request.get(f"{ROOT}/sw.js").text()
+            assert "tri-echo-v4.5.0" in page.evaluate("caches.keys()")
             page.evaluate("caches.open('playtest-unrelated-cache')")
             page.evaluate("navigator.serviceWorker.getRegistration().then(registration => registration.unregister())")
             page.reload(wait_until="networkidle")
@@ -320,6 +320,8 @@ with sync_playwright() as p:
     assert classic_snooker["balls"] == 3
     assert classic_snooker["hole"] is None
     assert classic_snooker["pockets"] == 6
+    assert classic_snooker["pocketModel"] == "physical"
+    assert classic_snooker["pocketProfile"] == "classic"
     page.locator("#homeBtn").click()
     page.locator("#mode").select_option("hybrid")
     page.locator("#tableStyle").select_option("echo")
@@ -335,6 +337,8 @@ with sync_playwright() as p:
         assert state["mode"] == mode
         assert state["balls"] == count
         assert state["pockets"] == 6
+        assert state["pocketModel"] == "physical"
+        assert state["pocketProfile"] == {"american": "american", "british": "snooker", "trick": "classic"}[mode]
         if mode in ("american", "british"):
             assert state["obstacles"] == 0
             assert state["frictionZone"] is False
@@ -352,6 +356,7 @@ with sync_playwright() as p:
     american_training = page.evaluate("window.__TRI_ECHO__.state()")
     assert american_training["balls"] == 16
     assert american_training["ballSet"] == "american"
+    assert american_training["pocketModel"] == "physical"
     assert american_training["obstacles"] == 0
     assert american_training["roles"].count("solid") == 7
     assert american_training["roles"].count("stripe") == 7
@@ -697,6 +702,44 @@ with sync_playwright() as p:
     page.screenshot(path=str(OUT / "android-collision-integrity.png"), full_page=True)
     assert errors == [], errors
     page.close()
+
+    # Physical pocket surfaces render in every supported viewport; exercise the
+    # shipped modules as well as the UI mode mapping, without runtime setters.
+    for label, viewport in [("iphone", {"width": 390, "height": 844}), ("android", {"width": 412, "height": 915}), ("wide", {"width": 430, "height": 932}), ("desktop", {"width": 1024, "height": 800})]:
+        page = browser.new_page(viewport=viewport)
+        errors = []
+        page.on("pageerror", lambda error: errors.append(str(error)))
+        page.on("console", lambda msg: errors.append(msg.text) if msg.type == "error" else None)
+        page.goto(ROOT, wait_until="networkidle")
+        for mode, profile in [("american", "american"), ("british", "snooker"), ("classic", "classic")]:
+            page.locator("#mode").select_option(mode)
+            if mode == "classic":
+                page.locator("#tableStyle").select_option("snooker")
+            page.locator("#playBtn").click()
+            state = page.evaluate("window.__TRI_ECHO__.state()")
+            assert state["pocketModel"] == "physical" and state["pocketProfile"] == profile, state
+            page.screenshot(path=str(OUT / f"{label}-physical-{profile}.png"), full_page=True)
+            page.locator("#homeBtn").click()
+        results = page.evaluate("""async () => {
+            const {generateTable} = await import('./js/generator.js');
+            const {Physics, STEP} = await import('./js/physics.js');
+            const results = [];
+            for (const ballSet of ['american', 'british', 'three']) for (let i = 0; i < 6; i++) {
+                const table = generateTable(1337, 'normal', 0, 720, 1120, {ballSet, traditional: true});
+                const ball = table.balls[0], pocket = table.pockets[i];
+                table.balls = [ball];
+                ball.x = pocket.mouth.x - pocket.outward.x * ball.r * 4;
+                ball.y = pocket.mouth.y - pocket.outward.y * ball.r * 4;
+                const physics = new Physics(table, {diagnostics: true});
+                physics.shoot(pocket.outward.x * 600, pocket.outward.y * 600);
+                for (let n = 0; n < 500 && physics.active; n++) physics.step(STEP);
+                results.push({pot: ball.pocketed, entered: physics.collisionEvents.some(e => e.type === 'POCKET_ENTRY'), bounded: physics.diagnostics.maxInternalSubsteps <= 16});
+            }
+            return results;
+        }""")
+        assert len(results) == 18 and all(row["pot"] and row["entered"] and row["bounded"] for row in results), results
+        assert errors == [], errors
+        page.close()
 
     # Persisted sound=false is effective immediately after reload.
     page = browser.new_page(viewport={"width": 390, "height": 844})

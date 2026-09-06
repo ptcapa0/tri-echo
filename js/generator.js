@@ -1,3 +1,4 @@
+import {createPocketGeometry,safeFromPocketGeometry} from './pocket-geometry.js';
 import {mulberry32,dist,hashString} from './math.js';
 export const DIFFICULTY={
  relaxed:{preview:1,obstacles:[0,1],lives:5,rails:3,margin:70,pocket:40},
@@ -42,8 +43,11 @@ export function generateTable(seed,difficulty='normal',adaptive=0,w=720,h=1120,o
  const frictionZone=!purist&&difficulty!=='relaxed'&&rng()>.55?{x:w*(.2+rng()*.35),y:h*(.25+rng()*.35),w:120+rng()*100,h:130+rng()*180,factor:rng()>.5?.62:1.5}:null;
  const targetType=options.targetType||(tableStyle==='snooker'||ballSet!=='three'||purist?'pockets':'portal');
  const table={seed,w,h,balls,obstacles,frictionZone,rails:[],bounds,hole:null,pockets:[],tableStyle,ballSet,traditional,targetType};
- if(targetType==='pockets')table.pockets=sixPockets(bounds,ballSet==='british'?30:33);
+ table.pocketModel=targetType==='pockets'?(options.pocketModel||(traditional||ballSet!=='three'?'physical':'magnetic')):'none';
+ if(table.pocketModel==='physical'){table.pocketGeometry=createPocketGeometry(bounds,balls[0].r*2,ballSet==='american'?'american':ballSet==='british'?'snooker':'classic');table.pockets=table.pocketGeometry.pockets}
+ else if(targetType==='pockets')table.pockets=sixPockets(bounds,ballSet==='british'?30:33);
  else if(targetType==='portal')relocateHole(table,seed^0x9e3779b9,base.pocket);
+ if(table.pocketModel==='physical')for(const b of balls)if(!safeFromPocketGeometry(table.pocketGeometry,b,b.r))respawnBall(table,b,(seed^Math.imul(b.id+1,2654435761))>>>0);
  return table;
 }
 export function relocateHole(table,seed,r=table.hole?.r||34){
@@ -51,11 +55,11 @@ export function relocateHole(table,seed,r=table.hole?.r||34){
  for(let tries=0;tries<300;tries++){const p={x:b.l+pad+rng()*(b.r-b.l-pad*2),y:b.t+pad+rng()*(b.b-b.t-pad*2)};if(table.balls.every(ball=>ball.pocketed||dist(p,ball)>r+ball.r+85)&&table.obstacles.every(o=>dist(p,o)>r+o.r+48)){chosen=p;break}}
  table.hole={...(chosen||{x:(b.l+b.r)/2,y:(b.t+b.b)/2}),r};return table.hole;
 }
-function safeFromTargets(table,p,ball){const targets=[...(table.pockets||[]),...(table.hole?[table.hole]:[])];return targets.every(h=>dist(p,h)>ball.r+h.r+55)}
+function safeFromTargets(table,p,ball){const targets=[...(table.pockets||[]),...(table.hole?[table.hole]:[])];return safeFromPocketGeometry(table.pocketGeometry,p,ball.r)&&targets.every(h=>dist(p,h)>ball.r+h.r+55)}
 export function respawnBall(table,ball,seed){
  const rng=mulberry32(seed),b=table.bounds,margin=ball.r+45;
- for(let tries=0;tries<300;tries++){const p={x:b.l+margin+rng()*(b.r-b.l-margin*2),y:b.t+margin+rng()*(b.b-b.t-margin*2)};if(table.balls.every(other=>other===ball||other.pocketed||dist(p,other)>ball.r+other.r+45)&&table.obstacles.every(o=>dist(p,o)>ball.r+o.r+35)&&safeFromTargets(table,p,ball)){Object.assign(ball,p,{vx:0,vy:0,pocketed:false,spinX:0,spinY:0});return true}}
- Object.assign(ball,{x:b.l+margin,y:b.b-margin,vx:0,vy:0,pocketed:false,spinX:0,spinY:0});return false;
+ for(let tries=0;tries<300;tries++){const p={x:b.l+margin+rng()*(b.r-b.l-margin*2),y:b.t+margin+rng()*(b.b-b.t-margin*2)};if(table.balls.every(other=>other===ball||other.pocketed||dist(p,other)>ball.r+other.r+45)&&table.obstacles.every(o=>dist(p,o)>ball.r+o.r+35)&&safeFromTargets(table,p,ball)){Object.assign(ball,p,{vx:0,vy:0,pocketed:false,pocketEntry:null,spinX:0,spinY:0});return true}}
+ return respotBall(table,ball);
 }
 function legalBallPosition(table,ball,p){
  const b=table.bounds;if(p.x-ball.r<b.l||p.x+ball.r>b.r||p.y-ball.r<b.t||p.y+ball.r>b.b)return false;
@@ -66,9 +70,9 @@ export function respotBall(table,ball){
  const candidates=[origin];
  for(let ring=1;ring<=16;ring++)for(let y=-ring;y<=ring;y++)for(let x=-ring;x<=ring;x++)if(Math.max(Math.abs(x),Math.abs(y))===ring)candidates.push({x:origin.x+x*step,y:origin.y+y*step});
  const p=candidates.find(candidate=>legalBallPosition(table,ball,candidate));if(!p)return false;
- Object.assign(ball,p,{vx:0,vy:0,pocketed:false,spinX:0,spinY:0});return true;
+ Object.assign(ball,p,{vx:0,vy:0,pocketed:false,pocketEntry:null,spinX:0,spinY:0});return true;
 }
 export function tableIsValid(table){
  const b=table.bounds,targets=[...(table.pockets||[]),...(table.hole?[table.hole]:[])];if(table.balls.length<3||(targets.length===0&&table.targetType!=='none'))return false;
- return table.balls.every((p,i)=>p.x-p.r>=b.l&&p.x+p.r<=b.r&&p.y-p.r>=b.t&&p.y+p.r<=b.b&&table.balls.every((q,j)=>i===j||dist(p,q)>p.r+q.r-1)&&table.obstacles.every(o=>dist(p,o)>p.r+o.r+8));
+ return table.balls.every((p,i)=>safeFromPocketGeometry(table.pocketGeometry,p,p.r)&&p.x-p.r>=b.l&&p.x+p.r<=b.r&&p.y-p.r>=b.t&&p.y+p.r<=b.b&&table.balls.every((q,j)=>i===j||dist(p,q)>p.r+q.r-1)&&table.obstacles.every(o=>dist(p,o)>p.r+o.r+8));
 }

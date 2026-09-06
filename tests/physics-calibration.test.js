@@ -17,7 +17,7 @@ import {
 
 const cleanTable=(difficulty='normal',w=720,h=1120,options={})=>{
  const table=generateTable(41,difficulty,0,w,h,{tableStyle:'echo',...options});
- table.hole=null;table.pockets=[];table.obstacles=[];table.frictionZone=null;table.rails=[];
+ table.hole=null;table.pockets=[];table.pocketModel='none';delete table.pocketGeometry;table.obstacles=[];table.frictionZone=null;table.rails=[];
  return table;
 };
 
