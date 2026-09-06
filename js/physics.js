@@ -1,3 +1,4 @@
+import {crossedPocketMouth,inPocketCapture,pocketCoordinates} from './pocket-geometry.js';
 import {clamp,len,segmentClosest} from './math.js';
 
 export const STEP=1/180;
@@ -23,7 +24,8 @@ export class Physics{
  constructor(table,options={}){this.options=options;this.load(table)}
 
  load(table){
-  this.table=table;this.balls=table.balls;this.time=0;this.path=[];
+  this.table=table;this.balls=table.balls;
+  this.time=0;this.path=[];
   this.contacts=new Set();this.contactOrder=[];this.cushions=0;this.active=false;
   this.distanceTravelled=0;this.pocketed=[];this.shotPower=0;this.modifiers={};this.firstCollision=null;
   this.cueCushionsBeforeContact=0;this.objectCushions=0;this.objectContacts=0;
@@ -86,13 +88,16 @@ export class Physics{
    const speed=len(b.vx,b.vy),rollingResistance=profile.rollingResistance,rolling=Math.max(0,1-rollingResistance*dt/Math.max(speed,rollingResistance));
    b.vx*=Math.exp(-drag*dt)*rolling;b.vy*=Math.exp(-drag*dt)*rolling;
    b.spinX*=Math.exp(-.62*dt);b.spinY*=Math.exp(-.7*dt);
+   const previous={x:b.x,y:b.y};
    const dx=b.vx*dt,dy=b.vy*dt;b.x+=dx;b.y+=dy;this.sliceTravel.set(b,Math.hypot(dx,dy));
-   this.capturePocket(b);
+   const moved={x:b.x,y:b.y};
+   if(this.table.pocketModel!=='physical')this.capturePocket(b);
    if(b.pocketed)continue;
-   this.wall(b,bounds,seenWalls,substep);
+   if(this.table.pocketModel==='physical')for(const [i,s] of this.table.pocketGeometry.segments.entries())this.rail(b,s,i,seenColliders,substep,'cushion');
+   else this.wall(b,bounds,seenWalls,substep);
    if(!this.modifiers.phase)for(let i=0;i<this.table.obstacles.length;i++)this.circleStatic(b,this.table.obstacles[i],.96,`bumper:${i}`,seenColliders,substep);
    for(let i=0;i<this.table.rails.length;i++)this.rail(b,this.table.rails[i],i,seenColliders,substep);
-   this.capturePocket(b);
+   this.capturePocket(b,previous,substep,moved);
   }
   for(let i=0;i<this.balls.length;i++)for(let j=i+1;j<this.balls.length;j++)if(!this.balls[i].pocketed&&!this.balls[j].pocketed)this.pair(this.balls[i],this.balls[j],seenPairs,substep);
   const cue=this.balls[0];this.distanceTravelled+=Math.max(0,(this.sliceTravel.get(cue)||0)-(this.sliceCorrection.get(cue)||0));
@@ -104,14 +109,23 @@ export class Physics{
  recordCollision(type,payload){if(this.options.diagnostics)this.collisionEvents.push({type,time:this.time,step:this.stepIndex,...payload})}
 
  pocketPull(b,dt){
-  const targets=[...(this.table.pockets||[]),...(this.table.hole&&!this.table.hole.disabled?[this.table.hole]:[])];
+  const targets=[...(this.table.pocketModel==='physical'?[]:this.table.pockets||[]),...(this.table.hole&&!this.table.hole.disabled?[this.table.hole]:[])];
   let h=null,best=Infinity;for(const target of targets){const d=Math.hypot(target.x-b.x,target.y-b.y);if(d<best){best=d;h=target}}
   if(!h)return;const dx=h.x-b.x,dy=h.y-b.y,d=best,reach=h.r+b.r*1.55;if(d>reach||d<.001)return;
   const strength=(1-d/reach)*(this.table.traditional?980:1280)*(this.modifiers.gravity?1.85:1);b.vx+=dx/d*strength*dt;b.vy+=dy/d*strength*dt;
  }
 
- capturePocket(b){
-  if(b.pocketed)return;const targets=[...(this.table.pockets||[]),...(this.table.hole&&!this.table.hole.disabled?[this.table.hole]:[])];
+ capturePocket(b,previous=null,substep=0,moved=b){
+  if(b.pocketed)return;
+  if(this.table.pocketModel==='physical'&&previous){
+   for(const p of this.table.pocketGeometry.pockets){
+    if(crossedPocketMouth(p,previous,moved,b.r)){b.pocketEntry=p.id;this.recordCollision('POCKET_ENTRY',{substep,ballId:b.id,pocketId:p.id})}
+    if(b.pocketEntry!==p.id)continue;
+    if(pocketCoordinates(p,b).depth<0){b.pocketEntry=null;this.recordCollision('POCKET_ESCAPE',{substep,ballId:b.id,pocketId:p.id});continue}
+    if(inPocketCapture(p,b)){this.recordCollision('POCKET_CAPTURE',{substep,ballId:b.id,pocketId:p.id,position:{x:b.x,y:b.y}});b.pocketEntry=null;b.vx=0;b.vy=0;b.pocketed=true;this.pocketed.push(b.id);return}
+   }
+  }
+  const targets=[...(this.table.pocketModel==='physical'?[]:this.table.pockets||[]),...(this.table.hole&&!this.table.hole.disabled?[this.table.hole]:[])];
   const h=targets.find(x=>Math.hypot(b.x-x.x,b.y-x.y)<x.r*.86);if(!h)return;
   b.x=h.x;b.y=h.y;b.vx=0;b.vy=0;b.pocketed=true;this.pocketed.push(b.id);
  }
@@ -179,9 +193,12 @@ export class Physics{
   return true;
  }
 
- rail(b,rail,index=0,seen=new Set(),substep=0){
+ rail(b,rail,index=0,seen=new Set(),substep=0,material='echo'){
+  const cushion=material==='cushion',profile=this.table.traditional?PHYSICS_PROFILE.traditional:PHYSICS_PROFILE.echo;
+  // Static broad phase: only nearby physical segments need a closest-point test.
+  if(cushion&&rail.box&&(b.x+b.r<rail.box.l||b.x-b.r>rail.box.r||b.y+b.r<rail.box.t||b.y-b.r>rail.box.b))return false;
   this.diagnostics.collisionChecks++;
-  const p=segmentClosest(b.x,b.y,rail.a,rail.b);let dx=b.x-p.x,dy=b.y-p.y,d=Math.hypot(dx,dy),min=b.r+5;if(d>=min)return false;
+  const p=segmentClosest(b.x,b.y,rail.a,rail.b);let dx=b.x-p.x,dy=b.y-p.y,d=Math.hypot(dx,dy),min=b.r+(cushion?rail.radius:5);if(d>=min)return false;
   let nx,ny;
   if(d<min*COLLISION_EPSILON_RATIO){
    const sx=rail.b.x-rail.a.x,sy=rail.b.y-rail.a.y,sl=len(sx,sy);
@@ -190,9 +207,17 @@ export class Physics{
    d=0;
   }else{nx=dx/d;ny=dy/d}
   const penetration=min-d,before=len(b.vx,b.vy);b.x=p.x+nx*min;b.y=p.y+ny*min;this.addCorrection(b,penetration);
-  const dot=b.vx*nx+b.vy*ny;if(dot<0){b.vx-=dot*1.9*nx;b.vy-=dot*1.9*ny}
-  const episode=`rail:${index}:${b.id}`,isNew=!this.colliderContactEpisodes.has(episode);seen.add(episode);
-  if(isNew)this.recordCollision('ECHO_RAIL',{substep,ballId:b.id,colliderId:index,normal:{x:nx,y:ny},relativeNormalSpeed:dot,penetration,speedBefore:before,speedAfter:len(b.vx,b.vy)});
+  const dot=b.vx*nx+b.vy*ny;if(dot<0){
+   const restitution=cushion?profile.cushionRestitution:.9;b.vx-=dot*(1+restitution)*nx;b.vy-=dot*(1+restitution)*ny;
+   if(cushion){
+    const tx=-ny,ty=nx,tangent=b.vx*tx+b.vy*ty,delta=tangent*(profile.cushionTangentRetention-1)+b.spinX*Math.abs(dot)*.16;
+    b.vx+=tx*delta;b.vy+=ty*delta;b.spinX*=-.72;
+    const speed=len(b.vx,b.vy);if(speed>before){b.vx*=before/speed;b.vy*=before/speed}
+   }
+  }
+  const episode=cushion?`${rail.contactId}:${b.id}`:`rail:${index}:${b.id}`,isNew=!this.colliderContactEpisodes.has(episode)&&!seen.has(episode);seen.add(episode);
+  if(isNew&&cushion){if(b.id===0){this.cushions++;if(this.firstCollision===null)this.cueCushionsBeforeContact++}else this.objectCushions++}
+  if(isNew)this.recordCollision(cushion?'CUSHION':'ECHO_RAIL',{substep,ballId:b.id,colliderId:index,...(cushion?{part:rail.part,pocketId:rail.pocketId}:{}),normal:{x:nx,y:ny},relativeNormalSpeed:dot,penetration,speedBefore:before,speedAfter:len(b.vx,b.vy)});
   return true;
  }
 }

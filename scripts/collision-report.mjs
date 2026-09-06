@@ -66,7 +66,7 @@ function runtimeEnvelope(){
  let maxInitial=0,maxBall=0,maxRelative=0,maxStep=0,maxRelativeStep=0;
  for(const profile of profiles){
   const source=generateTable(41,'normal',0,720,profile.height,{tableStyle:profile.traditional?'snooker':'echo',ballSet:profile.traditional?'british':'three',traditional:!!profile.traditional}),radius=profile.r||18;
-  source.balls=[ball(0,360,profile.height*.72,0,0,radius),ball(1,360,profile.height*.46,0,0,radius),ball(2,360,profile.height*.25,0,0,radius)];source.obstacles=[];source.rails=[];source.pockets=[];source.hole=null;source.frictionZone=null;
+  source.balls=[ball(0,360,profile.height*.72,0,0,radius),ball(1,360,profile.height*.46,0,0,radius),ball(2,360,profile.height*.25,0,0,radius)];source.obstacles=[];source.rails=[];source.pockets=[];source.pocketModel='none';delete source.pocketGeometry;source.hole=null;source.frictionZone=null;
   const calibration=calibrateShot(source),physics=new Physics(source,{diagnostics:true});physics.shoot(0,-calibration.maxSpeed,{x:1,y:-1},1);maxInitial=Math.max(maxInitial,calibration.maxSpeed);
   let previous=source.balls.map(b=>({x:b.x,y:b.y}));
   while(physics.active){
@@ -81,7 +81,7 @@ function runtimeEnvelope(){
 }
 
 function rackStress(ballSet,count){
- const source=generateTable(91,'normal',0,720,1120,{tableStyle:'snooker',ballSet,traditional:true});source.pockets=[];source.hole=null;
+ const source=generateTable(91,'normal',0,720,1120,{tableStyle:'snooker',ballSet,traditional:true});source.pockets=[];source.pocketModel='none';delete source.pocketGeometry;source.hole=null;
  const physics=new Physics(source,{diagnostics:true}),speed=calibrateShot(source).maxSpeed;physics.shoot(0,-speed,{x:0,y:0},1);
  let steps=0;while(physics.active&&steps++<4000)physics.step(STEP);
  return{balls:source.balls.length,steps,finite:source.balls.every(b=>[b.x,b.y,b.vx,b.vy].every(Number.isFinite)),maxSubsteps:physics.diagnostics.maxInternalSubsteps,checks:physics.diagnostics.collisionChecks,events:physics.collisionEvents.length,bounded:steps<4000&&physics.diagnostics.maxInternalSubsteps<=MAX_INTERNAL_SUBSTEPS,expected:count};
