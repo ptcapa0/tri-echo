@@ -38,6 +38,9 @@ jobs:
       - name: Stress-test physical pockets
         run: npm run physics:pockets -- --seed 1337 --cases 10000
 
+      - name: Validate first-contact aim geometry
+        run: npm run aim:validate -- --seed 1337 --cases 5000
+
       - name: Build production client
         run: npm run build
 

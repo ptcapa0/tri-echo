@@ -13,6 +13,6 @@ test('service worker deletes only obsolete TRI//ECHO caches',async()=>{
  vm.runInNewContext(await readFile('sw.js','utf8'),context);
  handlers.activate({waitUntil:promise=>activation=promise});
  await activation;
- assert.deepEqual(deleted,['tri-echo-v4.2.1','tri-echo-v4.3.0','tri-echo-v4.3.1','tri-echo-v4.3.2','tri-echo-v4.4.0']);
+ assert.deepEqual(deleted,['tri-echo-v4.2.1','tri-echo-v4.3.0','tri-echo-v4.3.1','tri-echo-v4.3.2','tri-echo-v4.4.0','tri-echo-v4.5.0']);
  assert.equal(claimed,true);
 });
