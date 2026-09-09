@@ -8,6 +8,14 @@ const cache=new Map();
 
 function ballDiameter(table){return (table.balls[0]?.r||18)*2}
 function profileFor(table){return table.traditional?PHYSICS_PROFILE.traditional:PHYSICS_PROFILE.echo}
+// Closed-form counterpart of the production drag + rolling resistance. Aim
+// uses this cheap horizon; the simulation remains the collision authority.
+export function estimateStoppingDistance(initialSpeed,{traditional=false}={}){
+ const speed=Math.max(0,initialSpeed),profile=traditional?PHYSICS_PROFILE.traditional:PHYSICS_PROFILE.echo,drag=profile.drag,rolling=profile.rollingResistance,stop=PHYSICS_PROFILE.stopSpeed;
+ if(speed<=stop)return 0;
+ const travel=v=>v/drag-rolling/(drag*drag)*Math.log1p(drag*v/rolling);
+ return Math.max(0,travel(speed)-travel(stop));
+}
 
 export function legacyShotMetrics(table,legacyScale=1.03){
  const diameter=ballDiameter(table),bounds=table.bounds;
