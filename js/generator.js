@@ -60,8 +60,8 @@ export function generateFairTable(seed,difficulty='normal',adaptive=0,w=720,h=11
   if(analysis.feasible&&(!best||analysis.difficultyScore<best.analysis.difficultyScore))best={table,analysis,attempt};
  }
  if(best)return Object.assign(best.table,{fairness:{...best.analysis,accepted:true,attempt:best.attempt,candidateSeed:deriveCandidateSeed(seed,best.attempt),fallback:true,reasons:[...best.analysis.reasons,'FALLBACK_DIFFICULTY_BAND']}});
- const table=generateCandidate(seed,'relaxed',0,w,h,{...options,initialRails:[]},0),b=table.bounds,mid=(b.l+b.r)/2;
- table.obstacles=[];table.frictionZone=null;table.rails=[];table.balls[0]=ball(mid,b.b-150,0);table.balls[1]=ball(mid,(b.t+b.b)/2,1);table.balls[2]=ball(b.l+130,(b.t+b.b)/2,2);
+ const table=generateCandidate(seed,'relaxed',0,w,h,options,0),b=table.bounds,mid=(b.l+b.r)/2;
+ table.obstacles=[];table.frictionZone=null;table.balls[0]=ball(mid,b.b-150,0);table.balls[1]=ball(mid,(b.t+b.b)/2,1);table.balls[2]=ball(b.l+130,(b.t+b.b)/2,2);
  if(table.hole)table.hole={x:mid,y:b.t+100,r:table.hole.r};
  const analysis=analyzeTableFairness(table,{difficulty:'relaxed'});
  return Object.assign(table,{fairness:{...analysis,accepted:analysis.feasible,attempt:FAIRNESS.MAX_ATTEMPTS,candidateSeed:deriveCandidateSeed(seed,0),fallback:true,reasons:[...analysis.reasons,'FALLBACK_SAFE_CANDIDATE']}});
