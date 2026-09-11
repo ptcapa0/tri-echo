@@ -41,6 +41,9 @@ jobs:
       - name: Validate aim reach against production Physics
         run: npm run aim:validate -- --seed 1337 --cases 5000
 
+      - name: Validate procedural fairness and solvability
+        run: npm run fairness:validate -- --seed 1337 --cases 10000
+
       - name: Build production client
         run: npm run build
 

@@ -146,8 +146,8 @@ with sync_playwright() as p:
             assert page.locator(".power").count() == 0
         if name == "iphone":
             assert page.evaluate("navigator.serviceWorker.ready.then(() => true)")
-            assert "tri-echo-v4.6.1" in page.request.get(f"{ROOT}/sw.js").text()
-            assert "tri-echo-v4.6.1" in page.evaluate("caches.keys()")
+            assert "tri-echo-v4.7.0" in page.request.get(f"{ROOT}/sw.js").text()
+            assert "tri-echo-v4.7.0" in page.evaluate("caches.keys()")
             page.evaluate("caches.open('playtest-unrelated-cache')")
             page.evaluate("navigator.serviceWorker.getRegistration().then(registration => registration.unregister())")
             page.reload(wait_until="networkidle")
