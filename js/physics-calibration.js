@@ -8,14 +8,56 @@ const cache=new Map();
 
 function ballDiameter(table){return (table.balls[0]?.r||18)*2}
 function profileFor(table){return table.traditional?PHYSICS_PROFILE.traditional:PHYSICS_PROFILE.echo}
-// Closed-form counterpart of the production drag + rolling resistance. Aim
-// uses this cheap horizon; the simulation remains the collision authority.
-export function estimateStoppingDistance(initialSpeed,{traditional=false}={}){
- const speed=Math.max(0,initialSpeed),profile=traditional?PHYSICS_PROFILE.traditional:PHYSICS_PROFILE.echo,drag=profile.drag,rolling=profile.rollingResistance,stop=PHYSICS_PROFILE.stopSpeed;
- if(speed<=stop)return 0;
- const travel=v=>v/drag-rolling/(drag*drag)*Math.log1p(drag*v/rolling);
- return Math.max(0,travel(speed)-travel(stop));
+// Continuous, closed-form counterpart of production drag + rolling resistance.
+// This deliberately models only the cue's unobstructed horizon: Physics remains
+// the authority for contacts, cushions and all world mutation.
+function travelAtSpeed(speed,drag,rolling){return speed/drag-rolling/(drag*drag)*Math.log1p(drag*speed/rolling)}
+function stoppingDistanceFor(speed,profile){
+ const start=Math.max(0,speed),{drag,rollingResistance:rolling}=profile,stop=PHYSICS_PROFILE.stopSpeed;
+ return start<=stop?0:Math.max(0,travelAtSpeed(start,drag,rolling)-travelAtSpeed(stop,drag,rolling));
 }
+function speedAfterTravel(speed,distance,profile){
+ const start=Math.max(0,speed),target=Math.max(0,distance),{drag,rollingResistance:rolling}=profile,stop=PHYSICS_PROFILE.stopSpeed;
+ if(start<=stop||target<=0)return start;
+ const origin=travelAtSpeed(start,drag,rolling),floor=travelAtSpeed(stop,drag,rolling);
+ if(target>=origin-floor)return stop;
+ const wanted=origin-target;
+ let low=stop,high=start;
+ // Fixed iterations keep pointer-move work bounded and deterministic.
+ for(let i=0;i<28;i++){const middle=(low+high)/2;if(travelAtSpeed(middle,drag,rolling)<wanted)low=middle;else high=middle}
+ return(high+low)/2;
+}
+function frictionInterval(cueBall,direction,zone){
+ if(!zone)return null;
+ const right=zone.x+zone.w,bottom=zone.y+zone.h;
+ let enter=-Infinity,exit=Infinity;
+ for(const [origin,delta,min,max] of [[cueBall.x,direction.x,zone.x,right],[cueBall.y,direction.y,zone.y,bottom]]){
+  if(Math.abs(delta)<1e-9){if(origin<=min||origin>=max)return null;continue}
+  const a=(min-origin)/delta,b=(max-origin)/delta;
+  enter=Math.max(enter,Math.min(a,b));exit=Math.min(exit,Math.max(a,b));
+ }
+ enter=Math.max(0,enter);
+ return exit>enter?{enter,exit}:null;
+}
+// Table-aware unobstructed stopping horizon. It applies the generated friction
+// rectangle only along the current cue ray, avoiding a full Physics world step
+// while matching its selected profile and zone multiplier.
+export function estimateTableStoppingDistance({table,cueBall,shotDirection,initialSpeed=0}){
+ const magnitude=Math.hypot(shotDirection?.x||0,shotDirection?.y||0),profile=profileFor(table);
+ if(!cueBall||magnitude<1e-9)return 0;
+ const direction={x:shotDirection.x/magnitude,y:shotDirection.y/magnitude},interval=frictionInterval(cueBall,direction,table.frictionZone);
+ if(!interval)return stoppingDistanceFor(initialSpeed,profile);
+ let speed=Math.max(0,initialSpeed),travelled=0;
+ const segments=[{end:interval.enter,profile},{end:interval.exit,profile:{...profile,drag:profile.drag*table.frictionZone.factor}},{end:Infinity,profile}];
+ for(const segment of segments){
+  const available=segment.end-travelled,stopping=stoppingDistanceFor(speed,segment.profile);
+  if(stopping<=available)return travelled+stopping;
+  speed=speedAfterTravel(speed,available,segment.profile);travelled=segment.end;
+ }
+ return travelled;
+}
+// Kept for calibration and free-table callers; table-aware aim uses the export above.
+export function estimateStoppingDistance(initialSpeed,{traditional=false}={}){return stoppingDistanceFor(initialSpeed,traditional?PHYSICS_PROFILE.traditional:PHYSICS_PROFILE.echo)}
 
 export function legacyShotMetrics(table,legacyScale=1.03){
  const diameter=ballDiameter(table),bounds=table.bounds;
