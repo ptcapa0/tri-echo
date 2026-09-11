@@ -57,14 +57,15 @@ export function generateFairTable(seed,difficulty='normal',adaptive=0,w=720,h=11
  for(let attempt=0;attempt<FAIRNESS.MAX_ATTEMPTS;attempt++){
   const table=generateCandidate(seed,difficulty,adaptive,w,h,options,attempt),analysis=analyzeTableFairness(table,{difficulty,adaptive});
   if(analysis.accepted)return Object.assign(table,{fairness:{...analysis,attempt,candidateSeed:deriveCandidateSeed(seed,attempt),fallback:false}});
-  if(analysis.feasible&&(!best||analysis.difficultyScore<best.analysis.difficultyScore))best={table,analysis,attempt};
+  const band=FAIRNESS.bands[difficulty]||FAIRNESS.bands.normal,distance=Math.max(band[0]-analysis.difficultyScore,0,analysis.difficultyScore-band[1]);
+  if(analysis.physicallyFeasible&&(!best||distance<best.distance))best={table,analysis,attempt,distance};
  }
- if(best)return Object.assign(best.table,{fairness:{...best.analysis,accepted:true,attempt:best.attempt,candidateSeed:deriveCandidateSeed(seed,best.attempt),fallback:true,reasons:[...best.analysis.reasons,'FALLBACK_DIFFICULTY_BAND']}});
+ if(best)return Object.assign(best.table,{fairness:{...best.analysis,attempt:best.attempt,candidateSeed:deriveCandidateSeed(seed,best.attempt),fallback:true,degradedDifficulty:true,reasons:[...best.analysis.reasons,'FALLBACK_DIFFICULTY_BAND']}});
  const table=generateCandidate(seed,'relaxed',0,w,h,options,0),b=table.bounds,mid=(b.l+b.r)/2;
  table.obstacles=[];table.frictionZone=null;table.balls[0]=ball(mid,b.b-150,0);table.balls[1]=ball(mid,(b.t+b.b)/2,1);table.balls[2]=ball(b.l+130,(b.t+b.b)/2,2);
  if(table.hole)table.hole={x:mid,y:b.t+100,r:table.hole.r};
  const analysis=analyzeTableFairness(table,{difficulty:'relaxed'});
- return Object.assign(table,{fairness:{...analysis,accepted:analysis.feasible,attempt:FAIRNESS.MAX_ATTEMPTS,candidateSeed:deriveCandidateSeed(seed,0),fallback:true,reasons:[...analysis.reasons,'FALLBACK_SAFE_CANDIDATE']}});
+ return Object.assign(table,{fairness:{...analysis,attempt:FAIRNESS.MAX_ATTEMPTS,candidateSeed:deriveCandidateSeed(seed,0),fallback:true,degradedDifficulty:!analysis.difficultyMatched,reasons:[...analysis.reasons,'FALLBACK_SAFE_CANDIDATE']}});
 }
 export function generateTable(seed,difficulty='normal',adaptive=0,w=720,h=1120,options={}){
  const procedural=!options.traditional&&(options.ballSet||'three')==='three'&&options.fairness!==false;
