@@ -39,7 +39,7 @@ class Game{
   if(this.info.kind==='trick'){tableStyle='snooker';ballSet=this.trickDiscipline==='american'?'american':this.trickDiscipline==='british'?'british':'three'}
   if(this.info.kind==='training'){tableStyle=this.trainingDiscipline==='golf'?'echo':'snooker';ballSet=this.trainingDiscipline==='american'?'american':this.trainingDiscipline==='snooker'?'british':'three'}
   const targetType=this.info.kind==='classic'?(tableStyle==='snooker'?'pockets':'none'):undefined;
-  this.table=generateTable(seed,this.difficulty,this.adaptive(),dims.w,dims.h,{tableStyle,ballSet,traditional:this.isTraditional(),targetType,pocketModel:this.info.kind==='trick'?'physical':undefined,initialRails:echoes,fairness:this.info.kind!=='trick'});
+  this.table=generateTable(seed,this.difficulty,this.adaptive(),dims.w,dims.h,{tableStyle,ballSet,traditional:this.isTraditional(),targetType,pocketModel:this.info.kind==='trick'?'physical':undefined,initialRails:echoes,fairness:this.info.kind!=='trick'&&this.info.kind!=='hybrid'});
   if(this.cueSportKind()==='american')this.ruleState={group:null,phase:'open'};
   if(this.cueSportKind()==='british')this.ruleState={phase:'red',colourIndex:0};
   this.trick=this.info.kind==='trick'?TRICK_SHOTS[this.holeIndex%TRICK_SHOTS.length]:null;

@@ -40,3 +40,14 @@ Candidate seeds derive from base seed and attempt only; fairness never uses
 clock, device state, network, or `Math.random`. Daily remains canonical at
 720×1120. Traditional racks, authored Trick Shot layouts, rules, saves,
 physics, pockets, aim, controls, and Echo Rail mechanics are unchanged.
+
+## Final audit hardening
+
+Rail clearance uses true segment-to-segment geometry, so interior crossings and
+collinear overlap have zero distance. The final fallback evaluates six bounded
+deterministic layouts against inherited Rails and returns only a physically
+feasible table; exhaustion is an explicit invariant failure. Validation checks
+cue first contact through Production Physics and independently checks the
+object-to-portal corridor against balls, bumpers, and Rails. Fusion explicitly
+defers PR5 portal fairness because its first phase is carom while the portal is
+disabled. Hard degraded-difficulty fallbacks remain a reported tuning risk.

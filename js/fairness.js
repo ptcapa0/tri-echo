@@ -6,7 +6,10 @@ import {MAX_SUBSTEP_DISPLACEMENT_RATIO} from './physics.js';
 export const FAIRNESS=Object.freeze({SAMPLES:24,MIN_OPEN:6,MAX_ATTEMPTS:8,EXIT:72,EPSILON:1e-6,bands:Object.freeze({relaxed:[0,.72],normal:[.04,.9],hard:[.12,1],adaptive:[.06,.96]}),margins:Object.freeze({relaxed:.14,normal:.075,hard:.03,adaptive:.06})});
 const finite=value=>Number.isFinite(value),unit=(a,b)=>{const x=b.x-a.x,y=b.y-a.y,m=Math.hypot(x,y);return m?{x:x/m,y:y/m,m}:null},point=(a,d,u)=>({x:a.x+d*u.x,y:a.y+d*u.y});
 const pointSegmentDistance=(p,a,b)=>{const q=segmentClosest(p.x,p.y,a,b);return Math.hypot(p.x-q.x,p.y-q.y)};
-function segmentDistance(a,b,c,d){return Math.min(pointSegmentDistance(a,c,d),pointSegmentDistance(b,c,d),pointSegmentDistance(c,a,b),pointSegmentDistance(d,a,b))}
+const cross=(a,b,c)=>(b.x-a.x)*(c.y-a.y)-(b.y-a.y)*(c.x-a.x);
+const between=(value,a,b)=>value>=Math.min(a,b)-FAIRNESS.EPSILON&&value<=Math.max(a,b)+FAIRNESS.EPSILON;
+function segmentsIntersect(a,b,c,d){const abC=cross(a,b,c),abD=cross(a,b,d),cdA=cross(c,d,a),cdB=cross(c,d,b),opposite=(x,y)=>x>FAIRNESS.EPSILON&&y<-FAIRNESS.EPSILON||x<-FAIRNESS.EPSILON&&y>FAIRNESS.EPSILON;if(opposite(abC,abD)&&opposite(cdA,cdB))return true;return(Math.abs(abC)<=FAIRNESS.EPSILON&&between(c.x,a.x,b.x)&&between(c.y,a.y,b.y))||(Math.abs(abD)<=FAIRNESS.EPSILON&&between(d.x,a.x,b.x)&&between(d.y,a.y,b.y))||(Math.abs(cdA)<=FAIRNESS.EPSILON&&between(a.x,c.x,d.x)&&between(a.y,c.y,d.y))||(Math.abs(cdB)<=FAIRNESS.EPSILON&&between(b.x,c.x,d.x)&&between(b.y,c.y,d.y))}
+function segmentDistance(a,b,c,d){return segmentsIntersect(a,b,c,d)?0:Math.min(pointSegmentDistance(a,c,d),pointSegmentDistance(b,c,d),pointSegmentDistance(c,a,b),pointSegmentDistance(d,a,b))}
 function inside(table,p,r){const b=table.bounds;return p.x-r>=b.l&&p.x+r<=b.r&&p.y-r>=b.t&&p.y+r<=b.b}
 function segmentClear(a,b,r,table,{ignore=[]}={}){
  const ignored=new Set(ignore);
@@ -18,7 +21,7 @@ function segmentClear(a,b,r,table,{ignore=[]}={}){
 function staticValid(table){
  if(!table||!table.bounds||!Array.isArray(table.balls)||table.balls.length<3||!table.balls.every(ball=>finite(ball.x)&&finite(ball.y)&&finite(ball.r)&&inside(table,ball,ball.r)))return false;
  for(let i=0;i<table.balls.length;i++)for(let j=i+1;j<table.balls.length;j++)if(Math.hypot(table.balls[i].x-table.balls[j].x,table.balls[i].y-table.balls[j].y)<table.balls[i].r+table.balls[j].r-FAIRNESS.EPSILON)return false;
- return table.obstacles.every(o=>finite(o.x)&&finite(o.y)&&finite(o.r)&&inside(table,o,o.r))&&table.balls.every(ball=>(table.rails||[]).every(rail=>pointSegmentDistance(ball,rail.a,rail.b)>=ball.r+(rail.radius??5)-FAIRNESS.EPSILON));
+ return table.obstacles.every(o=>finite(o.x)&&finite(o.y)&&finite(o.r)&&inside(table,o,o.r))&&(table.rails||[]).every(rail=>finite(rail.a?.x)&&finite(rail.a?.y)&&finite(rail.b?.x)&&finite(rail.b?.y)&&finite(rail.radius??5))&&table.balls.every(ball=>(table.rails||[]).every(rail=>pointSegmentDistance(ball,rail.a,rail.b)>=ball.r+(rail.radius??5)-FAIRNESS.EPSILON));
 }
 function reachFor(table,cue,direction,speed){return estimateTableStoppingDistance({table,cueBall:cue,shotDirection:direction,initialSpeed:speed})}
 function cueAccess(table,cue,speed){let open=0;for(let i=0;i<FAIRNESS.SAMPLES;i++){const d={x:Math.cos(Math.PI*2*i/FAIRNESS.SAMPLES),y:Math.sin(Math.PI*2*i/FAIRNESS.SAMPLES)},reach=reachFor(table,cue,d,speed),end=point(cue,Math.min(FAIRNESS.EXIT,reach),d);if(inside(table,end,cue.r)&&segmentClear(cue,end,cue.r,table,{ignore:[cue]}).clear)open++}return open}

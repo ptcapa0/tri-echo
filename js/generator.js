@@ -7,6 +7,15 @@ export const DIFFICULTY={
  hard:{preview:.34,obstacles:[2,3],lives:2,rails:2,margin:48,pocket:32},
  adaptive:{preview:.58,obstacles:[1,3],lives:3,rails:3,margin:56,pocket:36}
 };
+export const MAX_FALLBACK_LAYOUTS=6;
+const FALLBACK_LAYOUTS=Object.freeze([
+ {cue:[.50,.84],object:[.50,.50],other:[.24,.50],target:[.50,.12]},
+ {cue:[.30,.84],object:[.30,.50],other:[.70,.50],target:[.30,.12]},
+ {cue:[.70,.84],object:[.70,.50],other:[.30,.50],target:[.70,.12]},
+ {cue:[.50,.84],object:[.32,.50],other:[.68,.50],target:[.32,.12]},
+ {cue:[.88,.84],object:[.88,.50],other:[.30,.50],target:[.88,.12]},
+ {cue:[.12,.84],object:[.12,.50],other:[.76,.50],target:[.12,.12]}
+]);
 export function dailySeed(date=new Date()){return hashString(`tri-echo-v4:${date.getUTCFullYear()}-${date.getUTCMonth()+1}-${date.getUTCDate()}`)}
 const ball=(x,y,id,r=18,extra={})=>({x,y,vx:0,vy:0,r,id,pocketed:false,...extra});
 function point(rng,w,h,margin){return{x:margin+rng()*(w-2*margin),y:margin+rng()*(h-2*margin)}}
@@ -61,11 +70,14 @@ export function generateFairTable(seed,difficulty='normal',adaptive=0,w=720,h=11
   if(analysis.physicallyFeasible&&(!best||distance<best.distance))best={table,analysis,attempt,distance};
  }
  if(best)return Object.assign(best.table,{fairness:{...best.analysis,attempt:best.attempt,candidateSeed:deriveCandidateSeed(seed,best.attempt),fallback:true,degradedDifficulty:true,reasons:[...best.analysis.reasons,'FALLBACK_DIFFICULTY_BAND']}});
- const table=generateCandidate(seed,'relaxed',0,w,h,options,0),b=table.bounds,mid=(b.l+b.r)/2;
- table.obstacles=[];table.frictionZone=null;table.balls[0]=ball(mid,b.b-150,0);table.balls[1]=ball(mid,(b.t+b.b)/2,1);table.balls[2]=ball(b.l+130,(b.t+b.b)/2,2);
- if(table.hole)table.hole={x:mid,y:b.t+100,r:table.hole.r};
- const analysis=analyzeTableFairness(table,{difficulty:'relaxed'});
- return Object.assign(table,{fairness:{...analysis,attempt:FAIRNESS.MAX_ATTEMPTS,candidateSeed:deriveCandidateSeed(seed,0),fallback:true,degradedDifficulty:!analysis.difficultyMatched,reasons:[...analysis.reasons,'FALLBACK_SAFE_CANDIDATE']}});
+ for(const [layoutIndex,layout] of FALLBACK_LAYOUTS.entries()){
+  const table=generateCandidate(hashString(`tri-echo-fallback:${seed>>>0}:${layoutIndex}`),'relaxed',0,w,h,options,0),b=table.bounds,place=([x,y],id)=>ball(b.l+(b.r-b.l)*x,b.t+(b.b-b.t)*y,id);
+  table.obstacles=[];table.frictionZone=null;table.balls=[place(layout.cue,0),place(layout.object,1),place(layout.other,2)];
+  if(table.hole)table.hole={x:b.l+(b.r-b.l)*layout.target[0],y:b.t+(b.b-b.t)*layout.target[1],r:table.hole.r};
+  const analysis=analyzeTableFairness(table,{difficulty:'relaxed'});
+  if(analysis.physicallyFeasible)return Object.assign(table,{fairness:{...analysis,attempt:FAIRNESS.MAX_ATTEMPTS,candidateSeed:deriveCandidateSeed(seed,0),fallback:true,degradedDifficulty:!analysis.difficultyMatched,fallbackLayout:layoutIndex,reasons:[...analysis.reasons,'FALLBACK_SAFE_CANDIDATE']}});
+ }
+ throw new Error(`No physically feasible procedural fallback for seed ${seed>>>0}`);
 }
 export function generateTable(seed,difficulty='normal',adaptive=0,w=720,h=1120,options={}){
  const procedural=!options.traditional&&(options.ballSet||'three')==='three'&&options.fairness!==false;
