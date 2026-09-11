@@ -1,11 +1,21 @@
 import {createPocketGeometry,safeFromPocketGeometry} from './pocket-geometry.js';
 import {mulberry32,dist,hashString} from './math.js';
+import {FAIRNESS,analyzeTableFairness} from './fairness.js';
 export const DIFFICULTY={
  relaxed:{preview:1,obstacles:[0,1],lives:5,rails:3,margin:70,pocket:40},
  normal:{preview:.62,obstacles:[1,2],lives:3,rails:3,margin:58,pocket:36},
  hard:{preview:.34,obstacles:[2,3],lives:2,rails:2,margin:48,pocket:32},
  adaptive:{preview:.58,obstacles:[1,3],lives:3,rails:3,margin:56,pocket:36}
 };
+export const MAX_FALLBACK_LAYOUTS=6;
+const FALLBACK_LAYOUTS=Object.freeze([
+ {cue:[.50,.84],object:[.50,.50],other:[.24,.50],target:[.50,.12]},
+ {cue:[.30,.84],object:[.30,.50],other:[.70,.50],target:[.30,.12]},
+ {cue:[.70,.84],object:[.70,.50],other:[.30,.50],target:[.70,.12]},
+ {cue:[.50,.84],object:[.32,.50],other:[.68,.50],target:[.32,.12]},
+ {cue:[.88,.84],object:[.88,.50],other:[.30,.50],target:[.88,.12]},
+ {cue:[.12,.84],object:[.12,.50],other:[.76,.50],target:[.12,.12]}
+]);
 export function dailySeed(date=new Date()){return hashString(`tri-echo-v4:${date.getUTCFullYear()}-${date.getUTCMonth()+1}-${date.getUTCDate()}`)}
 const ball=(x,y,id,r=18,extra={})=>({x,y,vx:0,vy:0,r,id,pocketed:false,...extra});
 function point(rng,w,h,margin){return{x:margin+rng()*(w-2*margin),y:margin+rng()*(h-2*margin)}}
@@ -34,21 +44,44 @@ function britishBalls(w,h){
  for(const [role,value,x,y] of spots)balls.push(ball(x,y,id++,r,{role,value,color:colors[role],spot:{x,y}}));
  return balls;
 }
-export function generateTable(seed,difficulty='normal',adaptive=0,w=720,h=1120,options={}){
- const rng=mulberry32(seed),base=DIFFICULTY[difficulty]||DIFFICULTY.normal,tier=difficulty==='adaptive'?Math.max(-1,Math.min(2,adaptive)):0;
+export function deriveCandidateSeed(seed,attempt=0){return attempt===0?seed>>>0:hashString(`tri-echo-fairness:${seed>>>0}:${attempt}`)}
+export function generateCandidate(seed,difficulty='normal',adaptive=0,w=720,h=1120,options={},attempt=0){
+ const candidateSeed=deriveCandidateSeed(seed,attempt),rng=mulberry32(candidateSeed),base=DIFFICULTY[difficulty]||DIFFICULTY.normal,tier=difficulty==='adaptive'?Math.max(-1,Math.min(2,adaptive)):0;
  const tableStyle=options.tableStyle||'echo',ballSet=options.ballSet||'three',traditional=!!options.traditional,bounds={l:24,r:w-24,t:24,b:h-24};
  const balls=ballSet==='american'?americanBalls(w,h):ballSet==='british'?britishBalls(w,h):threeBalls(rng,w,h,base.margin);
  const purist=traditional||ballSet!=='three',range=base.obstacles,count=purist?0:Math.max(0,Math.floor(range[0]+rng()*(range[1]-range[0]+1)+tier)),obstacles=[];
  for(let i=0,tries=0;i<count&&tries++<120;){const p=point(rng,w,h,95),r=26+rng()*20;if(clear(p,balls,obstacles,78)){obstacles.push({...p,r,type:'bumper'});i++}}
  const frictionZone=!purist&&difficulty!=='relaxed'&&rng()>.55?{x:w*(.2+rng()*.35),y:h*(.25+rng()*.35),w:120+rng()*100,h:130+rng()*180,factor:rng()>.5?.62:1.5}:null;
  const targetType=options.targetType||(tableStyle==='snooker'||ballSet!=='three'||purist?'pockets':'portal');
- const table={seed,w,h,balls,obstacles,frictionZone,rails:[],bounds,hole:null,pockets:[],tableStyle,ballSet,traditional,targetType};
+ const table={seed,w,h,balls,obstacles,frictionZone,rails:structuredClone(options.initialRails||[]),bounds,hole:null,pockets:[],tableStyle,ballSet,traditional,targetType};
  table.pocketModel=targetType==='pockets'?(options.pocketModel||(traditional||ballSet!=='three'?'physical':'magnetic')):'none';
  if(table.pocketModel==='physical'){table.pocketGeometry=createPocketGeometry(bounds,balls[0].r*2,ballSet==='american'?'american':ballSet==='british'?'snooker':'classic');table.pockets=table.pocketGeometry.pockets}
  else if(targetType==='pockets')table.pockets=sixPockets(bounds,ballSet==='british'?30:33);
- else if(targetType==='portal')relocateHole(table,seed^0x9e3779b9,base.pocket);
+ else if(targetType==='portal')relocateHole(table,candidateSeed^0x9e3779b9,base.pocket);
  if(table.pocketModel==='physical')for(const b of balls)if(!safeFromPocketGeometry(table.pocketGeometry,b,b.r))respawnBall(table,b,(seed^Math.imul(b.id+1,2654435761))>>>0);
  return table;
+}
+export function generateFairTable(seed,difficulty='normal',adaptive=0,w=720,h=1120,options={}){
+ let best=null;
+ for(let attempt=0;attempt<FAIRNESS.MAX_ATTEMPTS;attempt++){
+  const table=generateCandidate(seed,difficulty,adaptive,w,h,options,attempt),analysis=analyzeTableFairness(table,{difficulty,adaptive});
+  if(analysis.accepted)return Object.assign(table,{fairness:{...analysis,attempt,candidateSeed:deriveCandidateSeed(seed,attempt),fallback:false}});
+  const band=FAIRNESS.bands[difficulty]||FAIRNESS.bands.normal,distance=Math.max(band[0]-analysis.difficultyScore,0,analysis.difficultyScore-band[1]);
+  if(analysis.physicallyFeasible&&(!best||distance<best.distance))best={table,analysis,attempt,distance};
+ }
+ if(best)return Object.assign(best.table,{fairness:{...best.analysis,attempt:best.attempt,candidateSeed:deriveCandidateSeed(seed,best.attempt),fallback:true,degradedDifficulty:true,reasons:[...best.analysis.reasons,'FALLBACK_DIFFICULTY_BAND']}});
+ for(const [layoutIndex,layout] of FALLBACK_LAYOUTS.entries()){
+  const table=generateCandidate(hashString(`tri-echo-fallback:${seed>>>0}:${layoutIndex}`),'relaxed',0,w,h,options,0),b=table.bounds,place=([x,y],id)=>ball(b.l+(b.r-b.l)*x,b.t+(b.b-b.t)*y,id);
+  table.obstacles=[];table.frictionZone=null;table.balls=[place(layout.cue,0),place(layout.object,1),place(layout.other,2)];
+  if(table.hole)table.hole={x:b.l+(b.r-b.l)*layout.target[0],y:b.t+(b.b-b.t)*layout.target[1],r:table.hole.r};
+  const analysis=analyzeTableFairness(table,{difficulty:'relaxed'});
+  if(analysis.physicallyFeasible)return Object.assign(table,{fairness:{...analysis,attempt:FAIRNESS.MAX_ATTEMPTS,candidateSeed:deriveCandidateSeed(seed,0),fallback:true,degradedDifficulty:!analysis.difficultyMatched,fallbackLayout:layoutIndex,reasons:[...analysis.reasons,'FALLBACK_SAFE_CANDIDATE']}});
+ }
+ throw new Error(`No physically feasible procedural fallback for seed ${seed>>>0}`);
+}
+export function generateTable(seed,difficulty='normal',adaptive=0,w=720,h=1120,options={}){
+ const procedural=!options.traditional&&(options.ballSet||'three')==='three'&&options.fairness!==false;
+ return procedural?generateFairTable(seed,difficulty,adaptive,w,h,options):generateCandidate(seed,difficulty,adaptive,w,h,options);
 }
 export function relocateHole(table,seed,r=table.hole?.r||34){
  const rng=mulberry32(seed),b=table.bounds,pad=r+34;let chosen=null;
