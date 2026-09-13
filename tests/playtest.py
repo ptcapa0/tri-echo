@@ -72,6 +72,16 @@ with sync_playwright() as p:
     }""")
     assert seam_state["ruleState"]["group"] == "solid"
     assert seam_state["score"] == 1
+    rewind_state = seam_page.evaluate("""() => {
+        const api = window.__TRI_ECHO_TEST__;
+        const started = api.startFixture({mode: 'classic'});
+        api.configureFixture({activePower: 'rewind', inventory: {...started.inventory, rewind: 1}, strokes: 1, totalStrokes: 1});
+        api.captureFixturePreShot();
+        return api.resolveShot({pocketedIds: [1], contacts: [1], firstCollision: 1});
+    }""")
+    assert rewind_state["strokes"] == 0 and rewind_state["totalStrokes"] == 0
+    assert rewind_state["inventory"]["rewind"] == 0 and rewind_state["activePower"] is None
+    assert all(not ball["pocketed"] for ball in rewind_state["ballState"])
     seam_page.close()
     for name, viewport in [("iphone", {"width": 390, "height": 844}), ("android", {"width": 412, "height": 915}), ("wide-android", {"width": 430, "height": 932}), ("desktop", {"width": 1024, "height": 800})]:
         page = browser.new_page(viewport=viewport, device_scale_factor=1)

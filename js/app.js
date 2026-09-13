@@ -48,10 +48,11 @@ class Game{
   this.shotProfile=calibrateShot(this.table);this.gestureProfile=gestureForCanvas();this.physics=new Physics(this.table);this.activePower=null;this.holeStartSnapshot=captureHoleStartState(this);renderPowers();updateHUD();this.unlockInteraction();
  }
  shoot(vx,vy,powerRatio){
-  if(!this.canAcceptGameplayInput())return false;this.preShot=structuredClone(this.table);this.strokes++;this.totalStrokes++;data.stats.shots++;
+  if(!this.canAcceptGameplayInput())return false;this.capturePreShot();this.strokes++;this.totalStrokes++;data.stats.shots++;
   this.lastShotSpeed=Math.hypot(vx,vy);this.lastNormalizedPower=powerRatio;this.lastShotDirection=this.lastShotSpeed?{x:vx/this.lastShotSpeed,y:vy/this.lastShotSpeed}:{x:0,y:0};
   const modifiers={gravity:this.activePower==='gravity',phase:this.activePower==='phase'};this.physics.shoot(vx,vy,contact,powerRatio,modifiers);save(data);updateHUD();syncGameplayControls();return true;
  }
+ capturePreShot(){this.preShot=structuredClone(this.table);return this.preShot}
   finish(){
   this.lockInteraction('shot-resolution');
   const result=deriveShotResult(this.physics),{cuePocketed:scratch,carom}=result;
@@ -225,6 +226,7 @@ if(isLocalTestSeam(window.location)){
    for(const [key,value] of Object.entries(values)){if(!fixtureFields.has(key))throw new Error(`invalid fixture field: ${key}`);game[key]=structuredClone(value)}
    updateHUD();return this.state();
   },
+  captureFixturePreShot(){if(!game)throw new Error('fixture game has not started');game.capturePreShot();return this.state()},
   resolveShot({pocketedIds=[],contacts=[],firstCollision=null,cushions=0,objectCushions=0,cueCushionsBeforeContact=0,objectContacts=0}={}){
    if(!game)throw new Error('fixture game has not started');
    if(!Array.isArray(pocketedIds)||!Array.isArray(contacts))throw new Error('shot facts must be arrays');
