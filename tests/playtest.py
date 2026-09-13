@@ -56,6 +56,23 @@ def begin_floating_pull(page, pointer_id, pull_fraction=.75):
 
 with sync_playwright() as p:
     browser = p.chromium.launch(headless=True)
+    # The deterministic seam is absent from an ordinary local launch, and is
+    # available only after the explicit local test opt-in.  Its resolution
+    # path below uses the live Game instance rather than a copied rules model.
+    seam_page = browser.new_page(viewport={"width": 1024, "height": 800})
+    seam_page.goto(ROOT, wait_until="networkidle")
+    assert seam_page.evaluate("window.__TRI_ECHO_TEST__ === undefined")
+    seam_page.goto(f"{ROOT}?triEchoTest=1", wait_until="networkidle")
+    assert seam_page.evaluate("typeof window.__TRI_ECHO_TEST__ === 'object'")
+    seam_state = seam_page.evaluate("""() => {
+        const api = window.__TRI_ECHO_TEST__;
+        const started = api.startFixture({mode: 'american'});
+        const solid = started.ballState.find((ball, index) => started.roles[index] === 'solid');
+        return api.resolveShot({pocketedIds: [solid.id], contacts: [solid.id], firstCollision: solid.id});
+    }""")
+    assert seam_state["ruleState"]["group"] == "solid"
+    assert seam_state["score"] == 1
+    seam_page.close()
     for name, viewport in [("iphone", {"width": 390, "height": 844}), ("android", {"width": 412, "height": 915}), ("wide-android", {"width": 430, "height": 932}), ("desktop", {"width": 1024, "height": 800})]:
         page = browser.new_page(viewport=viewport, device_scale_factor=1)
         errors = []

@@ -10,6 +10,7 @@ import {MODES,TABLE_STYLES,TRAINING_DISCIPLINES,TRICK_SHOTS,POWERS,parForTable,g
 import {loadSave,save,exportSave,importSave} from './storage.js';
 import {AudioFX} from './audio.js';
 import {applySoundSetting,captureHoleStartState,completeDailyRun,dailyChallengeConfig,deriveShotResult,fusionCaromSucceeded,InteractionGate,recordHoleResult,restoreHoleStartState,RoundTaskController,shouldCreateEchoRail} from './rules.js';
+import {isLocalTestSeam} from './testability.js';
 
 const $=s=>document.querySelector(s),canvas=$('#game'),ctx=canvas.getContext('2d',{alpha:false}),audio=new AudioFX();
 const touchScope=document.createElement('style');touchScope.textContent='html,body{touch-action:auto}#stage,canvas,.contact-control,.move-contact,.cue-face,.powers{touch-action:none}dialog,.panel{touch-action:pan-y}';document.head.append(touchScope);document.querySelector('meta[name="viewport"]')?.setAttribute('content','width=device-width,initial-scale=1,viewport-fit=cover');
@@ -206,3 +207,33 @@ window.__TRI_ECHO__={state:()=>{
  const pull=floatingPull();
  return{mode:game.mode,holeIndex:game.holeIndex,dailyDayKey:game.dailyDayKey,difficulty:game.difficulty,seed:game.seedBase,tableStyle:game.table.tableStyle,ballSet:game.table.ballSet,traditional:game.table.traditional,pocketModel:game.table.pocketModel,pocketProfile:game.table.pocketGeometry?.profile||null,tableWidth:game.table.w,tableHeight:game.table.h,balls:game.table.balls.length,ballState:game.table.balls.map(b=>({id:b.id,x:b.x,y:b.y,pocketed:b.pocketed})),roles:game.table.balls.map(b=>b.role),obstacles:game.table.obstacles.length,frictionZone:!!game.table.frictionZone,pockets:game.table.pockets?.length||0,trick:game.trick?.id||null,active:game.physics.active,score:game.score,strokes:game.strokes,totalStrokes:game.totalStrokes,par:game.par,hybridPhase:game.hybridPhase,ruleState:structuredClone(game.ruleState),finished:game.finished,cue:{x:game.table.balls[0].x/game.table.w,y:game.table.balls[0].y/game.table.h},hole:game.table.hole&&{x:game.table.hole.x/game.table.w,y:game.table.hole.y/game.table.h,r:game.table.hole.r,disabled:!!game.table.hole.disabled},contact:{...contact},controlPos:{...controlPos},activePower:game.activePower,inventory:{...game.inventory},soundEnabled:audio.enabled,cueSpeed:len(game.table.balls[0].vx,game.table.balls[0].vy),maxSpeed:game.shotProfile.maxSpeed,requiredReach:game.shotProfile.requiredReach,measuredReach:game.shotProfile.measuredReach,stepRatio:game.shotProfile.stepRatio,fullPullCss:game.gestureProfile.fullPullCss,deadZoneCss:game.gestureProfile.deadZoneCss,pullOriginScreen:drag?{...drag.originScreen}:null,pullCurrentScreen:drag?{...drag.currentScreen}:null,normalizedPull:pull.normalizedPull,normalizedPower:pull.normalizedPower,shotDirection:{...pull.shotDirection},shotSpeed:pull.speed,lastShotSpeed:game.lastShotSpeed||0,lastNormalizedPower:game.lastNormalizedPower||0,lastShotDirection:{...(game.lastShotDirection||{x:0,y:0})},cushions:game.physics.cushions,contacts:game.physics.contacts.size,pocketed:[...game.physics.pocketed],rails:game.table.rails.length,interactionLocked:game.interactionLocked,interactionLockReason:game.interactionLockReason,canAcceptGameplayInput:game.canAcceptGameplayInput(),retryDisabled:$('#retryBtn').disabled,dragActive:!!drag,activeGameplayPointerId:gameplayPointer.pointerId,dragPointerId:drag?gameplayPointer.pointerId:null,roundEpoch:game.roundTasks.epoch};
 }};document.addEventListener('visibilitychange',()=>{if(document.hidden)cancelActivePointers();paused=document.hidden||$('#menu').open||$('#settings').open||$('#progress').open;syncGameplayControls()});if('serviceWorker'in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js'));resize();updateContactUI();updateContinue();syncGameplayControls();$('#menu').showModal();requestAnimationFrame(loop);
+
+if(isLocalTestSeam(window.location)){
+ const fixtureFields=new Set(['ruleState','hybridPhase','score','streak','strokes','totalStrokes','activePower','inventory']);
+ const modes=new Set(Object.keys(MODES)),training=new Set(Object.keys(TRAINING_DISCIPLINES)),tricks=new Set(['golf','classic','american','british']);
+ window.__TRI_ECHO_TEST__={
+  state:()=>window.__TRI_ECHO__.state(),
+  startFixture({mode,trainingDiscipline,trickDiscipline}={}){
+   if(!modes.has(mode))throw new Error('invalid fixture mode');
+   if(trainingDiscipline!==undefined&&!training.has(trainingDiscipline))throw new Error('invalid training discipline');
+   if(trickDiscipline!==undefined&&!tricks.has(trickDiscipline))throw new Error('invalid trick discipline');
+   data.mode=mode;if(trainingDiscipline!==undefined)data.trainingDiscipline=trainingDiscipline;if(trickDiscipline!==undefined)data.trickDiscipline=trickDiscipline;
+   paused=false;game=new Game();return this.state();
+  },
+  configureFixture(values={}){
+   if(!game)throw new Error('fixture game has not started');
+   for(const [key,value] of Object.entries(values)){if(!fixtureFields.has(key))throw new Error(`invalid fixture field: ${key}`);game[key]=structuredClone(value)}
+   updateHUD();return this.state();
+  },
+  resolveShot({pocketedIds=[],contacts=[],firstCollision=null,cushions=0,objectCushions=0,cueCushionsBeforeContact=0,objectContacts=0}={}){
+   if(!game)throw new Error('fixture game has not started');
+   if(!Array.isArray(pocketedIds)||!Array.isArray(contacts))throw new Error('shot facts must be arrays');
+   const validIds=new Set(game.table.balls.map(ball=>ball.id));
+   if(!pocketedIds.every(id=>validIds.has(id))||!contacts.every(id=>validIds.has(id))||(firstCollision!==null&&!validIds.has(firstCollision)))throw new Error('shot facts reference an unknown ball');
+   for(const ball of game.table.balls)ball.pocketed=pocketedIds.includes(ball.id);
+   Object.assign(game.physics,{pocketed:[...pocketedIds],contacts:new Set(contacts),firstCollision,cushions,objectCushions,cueCushionsBeforeContact,objectContacts,active:false});
+   game.finish();return this.state();
+  },
+  restartHole(){if(!game)throw new Error('fixture game has not started');return game.restartHole();}
+ };
+}
