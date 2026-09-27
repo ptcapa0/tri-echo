@@ -100,6 +100,229 @@ with sync_playwright() as p:
     }""")
     assert errors == 3
     seam_page.close()
+
+    # PR6.0 Checkpoint A: freeze the observable American branch of the live
+    # cue-sport resolver.  Each fixture is a fresh real Game; roles are read
+    # from the generated table rather than recreated in this test.
+    american_page = browser.new_page(viewport={"width": 1024, "height": 800})
+    american_page.goto(f"{ROOT}?triEchoTest=1", wait_until="networkidle")
+    american = american_page.evaluate("""() => {
+        const api = window.__TRI_ECHO_TEST__;
+        const role = (state, name) => state.ballState.find((ball, index) => state.roles[index] === name);
+        const scenarios = {};
+
+        let state = api.startFixture({mode: 'american'});
+        let solid = role(state, 'solid');
+        scenarios.openSolid = api.resolveShot({pocketedIds: [solid.id], contacts: [solid.id], firstCollision: solid.id});
+
+        state = api.startFixture({mode: 'american'});
+        let openStripe = role(state, 'stripe');
+        scenarios.openStripe = api.resolveShot({pocketedIds: [openStripe.id], contacts: [openStripe.id], firstCollision: openStripe.id});
+
+        state = api.startFixture({mode: 'american'});
+        const stripe = role(state, 'stripe');
+        scenarios.openNoPot = api.resolveShot({contacts: [stripe.id], firstCollision: stripe.id});
+
+        state = api.startFixture({mode: 'american'});
+        solid = role(state, 'solid');
+        api.configureFixture({ruleState: {group: 'solid', phase: 'open'}});
+        scenarios.legalOwn = api.resolveShot({pocketedIds: [solid.id], contacts: [solid.id], firstCollision: solid.id});
+
+        state = api.startFixture({mode: 'american'});
+        solid = role(state, 'solid');
+        const mixedStripe = role(state, 'stripe');
+        api.configureFixture({ruleState: {group: 'solid', phase: 'open'}});
+        scenarios.mixedPot = api.resolveShot({pocketedIds: [solid.id, mixedStripe.id], contacts: [solid.id], firstCollision: solid.id});
+        scenarios.mixedSolidId = solid.id;
+        scenarios.mixedStripeId = mixedStripe.id;
+
+        state = api.startFixture({mode: 'american'});
+        solid = role(state, 'solid');
+        const wrongFirst = role(state, 'stripe');
+        api.configureFixture({ruleState: {group: 'solid', phase: 'open'}});
+        scenarios.illegalFirstOwnPot = api.resolveShot({pocketedIds: [solid.id], contacts: [wrongFirst.id], firstCollision: wrongFirst.id});
+
+        state = api.startFixture({mode: 'american'});
+        const opponent = role(state, 'stripe');
+        api.configureFixture({ruleState: {group: 'solid', phase: 'open'}});
+        scenarios.opponentPot = api.resolveShot({pocketedIds: [opponent.id], contacts: [opponent.id], firstCollision: opponent.id});
+        scenarios.opponentId = opponent.id;
+
+        state = api.startFixture({mode: 'american'});
+        scenarios.scratch = api.resolveShot({pocketedIds: [state.ballState[0].id], contacts: [], firstCollision: null});
+
+        state = api.startFixture({mode: 'american'});
+        api.configureFixture({ruleState: {group: 'solid', phase: 'open'}});
+        scenarios.noFirstContact = api.resolveShot({});
+
+        state = api.startFixture({mode: 'american'});
+        const eight = role(state, 'eight');
+        api.configureFixture({ruleState: {group: 'solid', phase: 'open'}});
+        scenarios.prematureEight = api.resolveShot({pocketedIds: [eight.id], contacts: [eight.id], firstCollision: eight.id});
+        scenarios.eightId = eight.id;
+
+        state = api.startFixture({mode: 'american'});
+        const solids = state.ballState.filter((ball, index) => state.roles[index] === 'solid');
+        const clearedEight = role(state, 'eight');
+        api.configureFixture({ruleState: {group: 'solid', phase: 'open'}});
+        api.seedPocketedObjectBalls(solids.map(ball => ball.id));
+        scenarios.clearedEight = api.resolveShot({pocketedIds: [clearedEight.id], contacts: [clearedEight.id], firstCollision: clearedEight.id});
+        scenarios.clearedSolidIds = solids.map(ball => ball.id);
+        scenarios.clearedEightId = clearedEight.id;
+        return scenarios;
+    }""")
+    assert american["openSolid"]["ruleState"]["group"] == "solid"
+    assert american["openSolid"]["score"] == 1
+    assert american["openStripe"]["ruleState"]["group"] == "stripe"
+    assert american["openStripe"]["score"] == 1
+    assert american["openNoPot"]["ruleState"]["group"] is None
+    assert american["openNoPot"]["score"] == 0
+    assert american["legalOwn"]["score"] == 1
+    assert american["mixedPot"]["score"] == 1
+    assert next(ball["pocketed"] for ball in american["mixedPot"]["ballState"] if ball["id"] == american["mixedSolidId"])
+    assert not next(ball["pocketed"] for ball in american["mixedPot"]["ballState"] if ball["id"] == american["mixedStripeId"])
+    # Current behavior deliberately retains the own-ball point even when the
+    # first contact was illegal.  This is a characterization, not a fix.
+    assert american["illegalFirstOwnPot"]["score"] == 1
+    assert american["opponentPot"]["score"] == 0
+    assert not next(ball["pocketed"] for ball in american["opponentPot"]["ballState"] if ball["id"] == american["opponentId"])
+    assert american["scratch"]["score"] == 0
+    assert not american["scratch"]["ballState"][0]["pocketed"]
+    assert american["noFirstContact"]["score"] == 0
+    assert american["prematureEight"]["score"] == 0
+    assert not next(ball["pocketed"] for ball in american["prematureEight"]["ballState"] if ball["id"] == american["eightId"])
+    assert american["clearedEight"]["score"] == 8
+    assert american["clearedEight"]["pocketed"] == [american["clearedEightId"]]
+    assert american["clearedEight"]["interactionLocked"] is True
+    assert all(next(ball["pocketed"] for ball in american["clearedEight"]["ballState"] if ball["id"] == ball_id) for ball_id in american["clearedSolidIds"] + [american["clearedEightId"]])
+    american_page.close()
+
+    # PR6.0 Checkpoint A: characterize the live British/Snooker state
+    # machine, including its persistent late-frame fixture preconditions.
+    snooker_page = browser.new_page(viewport={"width": 1024, "height": 800})
+    snooker_page.goto(f"{ROOT}?triEchoTest=1", wait_until="networkidle")
+    snooker = snooker_page.evaluate("""() => {
+        const api = window.__TRI_ECHO_TEST__;
+        const role = (state, name) => state.ballState.find((ball, index) => state.roles[index] === name);
+        const scenarios = {};
+
+        let state = api.startFixture({mode: 'british'});
+        let red = role(state, 'red');
+        scenarios.redPot = api.resolveShot({pocketedIds: [red.id], contacts: [red.id], firstCollision: red.id});
+
+        state = api.startFixture({mode: 'british'});
+        const twoReds = state.ballState.filter((ball, index) => state.roles[index] === 'red').slice(0, 2);
+        scenarios.multipleReds = api.resolveShot({pocketedIds: twoReds.map(ball => ball.id), contacts: [twoReds[0].id], firstCollision: twoReds[0].id});
+
+        state = api.startFixture({mode: 'british'});
+        let black = role(state, 'black');
+        scenarios.redWrongContact = api.resolveShot({contacts: [black.id], firstCollision: black.id});
+
+        state = api.startFixture({mode: 'british'});
+        black = role(state, 'black');
+        scenarios.redColourPot = api.resolveShot({pocketedIds: [black.id], contacts: [black.id], firstCollision: black.id});
+        scenarios.blackId = black.id;
+
+        state = api.startFixture({mode: 'british'});
+        black = role(state, 'black');
+        api.configureFixture({ruleState: {phase: 'color', colourIndex: 0}});
+        scenarios.colourPot = api.resolveShot({pocketedIds: [black.id], contacts: [black.id], firstCollision: black.id});
+        scenarios.colourBlackId = black.id;
+
+        state = api.startFixture({mode: 'british'});
+        red = role(state, 'red');
+        api.configureFixture({ruleState: {phase: 'color', colourIndex: 0}});
+        scenarios.colourRedPot = api.resolveShot({pocketedIds: [red.id], contacts: [red.id], firstCollision: red.id});
+        scenarios.colourRedId = red.id;
+
+        state = api.startFixture({mode: 'british'});
+        const reds = state.ballState.filter((ball, index) => state.roles[index] === 'red');
+        const finalRed = reds.at(-1);
+        black = role(state, 'black');
+        api.seedPocketedObjectBalls(reds.slice(0, -1).map(ball => ball.id));
+        scenarios.finalRed = api.resolveShot({pocketedIds: [finalRed.id], contacts: [finalRed.id], firstCollision: finalRed.id});
+        scenarios.finalRedState = api.resolveShot({pocketedIds: [black.id], contacts: [black.id], firstCollision: black.id});
+        scenarios.finalRedId = finalRed.id;
+        scenarios.finalBlackId = black.id;
+
+        state = api.startFixture({mode: 'british'});
+        const allReds = state.ballState.filter((ball, index) => state.roles[index] === 'red');
+        black = role(state, 'black');
+        api.seedPocketedObjectBalls(allReds.map(ball => ball.id));
+        api.configureFixture({ruleState: {phase: 'color', colourIndex: 0}});
+        scenarios.noRedsTransition = api.resolveShot({pocketedIds: [black.id], contacts: [black.id], firstCollision: black.id});
+
+        state = api.startFixture({mode: 'british'});
+        const orderedReds = state.ballState.filter((ball, index) => state.roles[index] === 'red');
+        const yellow = role(state, 'yellow');
+        api.seedPocketedObjectBalls(orderedReds.map(ball => ball.id));
+        api.configureFixture({ruleState: {phase: 'colours', colourIndex: 0}});
+        scenarios.orderedYellow = api.resolveShot({pocketedIds: [yellow.id], contacts: [yellow.id], firstCollision: yellow.id});
+        scenarios.yellowId = yellow.id;
+
+        state = api.startFixture({mode: 'british'});
+        const sequenceReds = state.ballState.filter((ball, index) => state.roles[index] === 'red');
+        const sequenceRoles = ['yellow', 'green', 'brown', 'blue', 'pink', 'black'];
+        const sequenceBalls = sequenceRoles.map(name => role(state, name));
+        api.seedPocketedObjectBalls(sequenceReds.map(ball => ball.id));
+        api.configureFixture({ruleState: {phase: 'colours', colourIndex: 0}});
+        scenarios.orderedSequence = sequenceBalls.map(ball => api.resolveShot({pocketedIds: [ball.id], contacts: [ball.id], firstCollision: ball.id}));
+
+        state = api.startFixture({mode: 'british'});
+        const wrongReds = state.ballState.filter((ball, index) => state.roles[index] === 'red');
+        const green = role(state, 'green');
+        api.seedPocketedObjectBalls(wrongReds.map(ball => ball.id));
+        api.configureFixture({ruleState: {phase: 'colours', colourIndex: 0}});
+        scenarios.orderedWrongContact = api.resolveShot({contacts: [green.id], firstCollision: green.id});
+        scenarios.orderedWrongPot = api.resolveShot({pocketedIds: [green.id], contacts: [yellow.id], firstCollision: yellow.id});
+        scenarios.greenId = green.id;
+
+        state = api.startFixture({mode: 'british'});
+        const finalBlack = role(state, 'black');
+        api.seedPocketedObjectBalls(state.ballState.slice(1).filter(ball => ball.id !== finalBlack.id).map(ball => ball.id));
+        api.configureFixture({ruleState: {phase: 'colours', colourIndex: 5}});
+        scenarios.frame = api.resolveShot({pocketedIds: [finalBlack.id], contacts: [finalBlack.id], firstCollision: finalBlack.id});
+        scenarios.finalFrameBlackId = finalBlack.id;
+        return scenarios;
+    }""")
+    assert snooker["redPot"]["score"] == 1
+    assert snooker["redPot"]["ruleState"]["phase"] == "color"
+    assert snooker["multipleReds"]["score"] == 2
+    assert snooker["multipleReds"]["ruleState"]["phase"] == "color"
+    assert snooker["redWrongContact"]["score"] == 0
+    assert snooker["redWrongContact"]["ruleState"]["phase"] == "red"
+    assert snooker["redColourPot"]["score"] == 0
+    assert not next(ball["pocketed"] for ball in snooker["redColourPot"]["ballState"] if ball["id"] == snooker["blackId"])
+    assert snooker["colourPot"]["score"] == 7
+    assert snooker["colourPot"]["ruleState"] == {"phase": "red", "colourIndex": 0}
+    assert not next(ball["pocketed"] for ball in snooker["colourPot"]["ballState"] if ball["id"] == snooker["colourBlackId"])
+    assert snooker["colourRedPot"]["score"] == 0
+    assert next(ball["pocketed"] for ball in snooker["colourRedPot"]["ballState"] if ball["id"] == snooker["colourRedId"])
+    assert snooker["finalRed"]["ruleState"]["phase"] == "color"
+    assert snooker["finalRedState"]["ruleState"] == {"phase": "colours", "colourIndex": 0}
+    assert snooker["finalRedState"]["pocketed"] == [snooker["finalBlackId"]]
+    assert next(ball["pocketed"] for ball in snooker["finalRedState"]["ballState"] if ball["id"] == snooker["finalRedId"])
+    assert not next(ball["pocketed"] for ball in snooker["finalRedState"]["ballState"] if ball["id"] == snooker["finalBlackId"])
+    assert snooker["noRedsTransition"]["ruleState"] == {"phase": "colours", "colourIndex": 0}
+    assert snooker["orderedYellow"]["score"] == 2
+    assert snooker["orderedYellow"]["ruleState"] == {"phase": "colours", "colourIndex": 1}
+    assert snooker["orderedYellow"]["pocketed"] == [snooker["yellowId"]]
+    assert [state["score"] for state in snooker["orderedSequence"]] == [2, 5, 9, 14, 20, 27]
+    assert [state["ruleState"]["colourIndex"] for state in snooker["orderedSequence"]] == [1, 2, 3, 4, 5, 6]
+    assert next(ball["pocketed"] for ball in snooker["orderedYellow"]["ballState"] if ball["id"] == snooker["yellowId"])
+    assert snooker["orderedWrongContact"]["score"] == 0
+    assert snooker["orderedWrongContact"]["ruleState"] == {"phase": "colours", "colourIndex": 0}
+    assert snooker["orderedWrongPot"]["score"] == 0
+    assert not next(ball["pocketed"] for ball in snooker["orderedWrongPot"]["ballState"] if ball["id"] == snooker["greenId"])
+    assert snooker["frame"]["score"] == 7
+    assert snooker["frame"]["interactionLocked"] is True
+    assert next(ball["pocketed"] for ball in snooker["frame"]["ballState"] if ball["id"] == snooker["finalFrameBlackId"])
+    snooker_page.wait_for_function("""() => {
+        const state = window.__TRI_ECHO_TEST__.state();
+        return !state.interactionLocked && state.ruleState.phase === 'red' && state.ballState.slice(1).every(ball => !ball.pocketed);
+    }""", timeout=5000)
+    assert snooker_page.evaluate("window.__TRI_ECHO_TEST__.state().score") == 7
+    snooker_page.close()
     for name, viewport in [("iphone", {"width": 390, "height": 844}), ("android", {"width": 412, "height": 915}), ("wide-android", {"width": 430, "height": 932}), ("desktop", {"width": 1024, "height": 800})]:
         page = browser.new_page(viewport=viewport, device_scale_factor=1)
         errors = []
