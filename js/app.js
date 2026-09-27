@@ -14,7 +14,7 @@ import {isLocalTestSeam} from './testability.js';
 
 const $=s=>document.querySelector(s),canvas=$('#game'),ctx=canvas.getContext('2d',{alpha:false}),audio=new AudioFX();
 const touchScope=document.createElement('style');touchScope.textContent='html,body{touch-action:auto}#stage,canvas,.contact-control,.move-contact,.cue-face,.powers{touch-action:none}dialog,.panel{touch-action:pan-y}';document.head.append(touchScope);document.querySelector('meta[name="viewport"]')?.setAttribute('content','width=device-width,initial-scale=1,viewport-fit=cover');
-let data=loadSave(),game=null,acc=0,last=performance.now(),drag=null,particles=[],toastTimer,paused=true;
+let data=loadSave(),game=null,acc=0,last=performance.now(),drag=null,particles=[],toastTimer,echoMemoryTimer,paused=true;
 let contact={x:0,y:0},contactPointer=null,movePointer=null,controlPos=data.settings.contactPos||{x:.76,y:.02};
 const gameplayPointer=new GameplayPointerOwner();
 applySoundSetting(audio,data.settings);
@@ -34,7 +34,7 @@ class Game{
  newHole(){
   this.lockInteraction('new-hole');
   this.invalidateRoundTasks();
-  const echoes=this.isTraditional()?[]:(this.table?.rails||[]).map(r=>({...r,life:r.life-1})).filter(r=>r.life>0),seed=(this.seedBase+Math.imul(this.holeIndex+1,2654435761))>>>0;
+  const echoes=this.isTraditional()?[]:(this.table?.rails||[]).map(r=>({...r,life:r.life-1})).filter(r=>r.life>0),inheritedRailCount=echoes.length,seed=(this.seedBase+Math.imul(this.holeIndex+1,2654435761))>>>0;
   const dims=this.mode==='daily'?{w:720,h:1120}:boardDimensions();
   let ballSet=this.info.kind==='american'?'american':this.info.kind==='british'?'british':'three',tableStyle=this.tableStyle;
   if(this.info.kind==='trick'){tableStyle='snooker';ballSet=this.trickDiscipline==='american'?'american':this.trickDiscipline==='british'?'british':'three'}
@@ -46,6 +46,7 @@ class Game{
   this.trick=this.info.kind==='trick'?TRICK_SHOTS[this.holeIndex%TRICK_SHOTS.length]:null;
   this.hybridPhase=this.info.kind==='hybrid'?'carom':null;if(this.info.kind==='hybrid'&&this.table.hole)this.table.hole.disabled=true;this.par=this.info.kind==='classic'?1:parForTable(this.table,this.difficulty);this.strokes=0;
   this.shotProfile=calibrateShot(this.table);this.gestureProfile=gestureForCanvas();this.physics=new Physics(this.table);this.activePower=null;this.holeStartSnapshot=captureHoleStartState(this);renderPowers();updateHUD();this.unlockInteraction();
+  if(inheritedRailCount)this.scheduleRoundTask(850,()=>showEchoMemory('MESA RECONFIGURADA',`${inheritedRailCount} ECHO RAIL${inheritedRailCount===1?' ATIVO':'S ATIVOS'}`));else hideEchoMemory();
  }
  shoot(vx,vy,powerRatio){
   if(!this.canAcceptGameplayInput())return false;this.capturePreShot();this.strokes++;this.totalStrokes++;data.stats.shots++;
@@ -56,7 +57,8 @@ class Game{
   finish(){
   this.lockInteraction('shot-resolution');
   const result=deriveShotResult(this.physics),{cuePocketed:scratch,carom}=result;
-  const forged=this.activePower==='forge';if(!this.isTraditional()&&shouldCreateEchoRail(result,{forged})){const rail=echoFromPath(this.physics.path);if(rail){this.table.rails.push(rail);while(this.table.rails.length>DIFFICULTY[this.difficulty].rails)this.table.rails.shift()}}
+  const forged=this.activePower==='forge';let createdEchoRail=false;if(!this.isTraditional()&&shouldCreateEchoRail(result,{forged})){const rail=echoFromPath(this.physics.path);if(rail){this.table.rails.push(rail);while(this.table.rails.length>DIFFICULTY[this.difficulty].rails)this.table.rails.shift();createdEchoRail=true}}
+  if(createdEchoRail)showEchoMemory('ECHO RAIL CRIADO','A mesa vai lembrar-se desta linha');
   if(this.activePower&&this.activePower!=='rewind'){this.inventory[this.activePower]=0;this.activePower=null;renderPowers()}
   if(this.cueSportKind())return this.finishCueSport(scratch,this.cueSportKind());
   if(this.info.kind==='trick')return this.finishTrick();
@@ -151,7 +153,9 @@ function cancelContactPointer(e){if(contactPointer==null||(e&&e.pointerId!==cont
 function cancelMovePointer(e){if(movePointer==null||(e&&e.pointerId!==movePointer))return false;const pointerId=movePointer;movePointer=null;releaseCapture($('#moveContact'),pointerId);return true}
 function cancelActivePointers(){cancelGameplayPointer();cancelContactPointer();cancelMovePointer()}
 function placeContact(){const stage=$('#stage'),control=$('#contactControl');if(!stage||!control)return;const x=controlPos.x*Math.max(0,stage.clientWidth-control.offsetWidth),y=controlPos.y*Math.max(0,stage.clientHeight-control.offsetHeight);control.style.left=`${x}px`;control.style.top=`${y}px`}
-function coach(n){const t=['','APONTAR + FORÇA','IMPACTO MÓVEL','JOGA AO PAR'],d=['','Puxa em qualquer ponto da mesa','Ajusta o efeito; usa MOVER para libertar a mesa','Cada tentativa conta como uma tacada'];$('#coachTitle').textContent=t[n];$('#coachText').textContent=d[n];$('#tutorial').classList.remove('hidden')}
+function coach(n){const echoLesson=n===3&&game&&!game.isTraditional(),t=['','APONTAR + FORÇA','IMPACTO MÓVEL',echoLesson?'A MESA LEMBRA-SE':'JOGA AO PAR'],d=['','Puxa em qualquer ponto da mesa','Ajusta o efeito; usa MOVER para libertar a mesa',echoLesson?'Jogadas relevantes podem deixar Echo Rails na próxima mesa.':'Cada tentativa conta como uma tacada'];$('#coachTitle').textContent=t[n];$('#coachText').textContent=d[n];$('#tutorial').classList.remove('hidden')}
+function hideEchoMemory(){clearTimeout(echoMemoryTimer);$('#echoMemory').classList.remove('show')}
+function showEchoMemory(title,text){const root=$('#echoMemory');$('#echoMemoryTitle').textContent=title;$('#echoMemoryText').textContent=text;root.classList.toggle('reduced',!!data.settings.reducedMotion);root.classList.add('show');clearTimeout(echoMemoryTimer);echoMemoryTimer=setTimeout(()=>root.classList.remove('show'),data.settings.reducedMotion?2600:3200)}
 
 function renderPowers(){const root=$('#powers');if(!game?.info.competitive){root.classList.add('hidden');root.innerHTML='';return}root.classList.remove('hidden');root.innerHTML=Object.entries(POWERS).map(([key,p])=>`<button class="power ${game.activePower===key?'active':''}" data-power="${key}" title="${p.name}: ${p.description}" ${game.inventory[key]&&game.canAcceptGameplayInput()?'':'disabled'}>${p.icon}<small>${game.inventory[key]||0}</small></button>`).join('');for(const b of root.querySelectorAll('.power'))b.onclick=()=>{if(!game.canAcceptGameplayInput())return;const key=b.dataset.power;game.activePower=game.activePower===key?null:key;renderPowers();showToast(game.activePower?POWERS[key].name.toUpperCase():'PODER CANCELADO')}}
 function syncGameplayControls(){const enabled=!!game&&game.canAcceptGameplayInput();$('#retryBtn').disabled=!enabled;$('#moveContact').disabled=!enabled;canvas.setAttribute('aria-disabled',String(!enabled));$('#cueFace').setAttribute('aria-disabled',String(!enabled));for(const button of document.querySelectorAll('.power'))button.disabled=!enabled||!game.inventory[button.dataset.power]}

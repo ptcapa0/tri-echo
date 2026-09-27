@@ -41,6 +41,32 @@ def take_velocity_shot(page, velocity, pointer_id=89):
     page.dispatch_event("#game", "pointermove", {"pointerId": pointer_id, "clientX": x+dx, "clientY": y+dy})
     page.dispatch_event("#game", "pointerup", {"pointerId": pointer_id, "clientX": x+dx, "clientY": y+dy})
 
+def find_real_daily_win(page):
+    return page.evaluate("""async () => {
+        const state = window.__TRI_ECHO__.state();
+        const {generateTable} = await import('./js/generator.js');
+        const {Physics, STEP} = await import('./js/physics.js');
+        const {calibrateShot} = await import('./js/physics-calibration.js');
+        const seed = (state.seed + Math.imul(state.holeIndex + 1, 2654435761)) >>> 0;
+        const table = generateTable(seed, 'normal', 0, 720, 1120, {
+            tableStyle: 'echo', ballSet: 'three', traditional: false
+        });
+        const metrics = calibrateShot(table);
+        for (let degrees = 0; degrees < 360; degrees += 1) {
+            const angle = degrees * Math.PI / 180;
+            const candidate = structuredClone(table);
+            const physics = new Physics(candidate);
+            const vx = Math.cos(angle) * metrics.maxSpeed;
+            const vy = Math.sin(angle) * metrics.maxSpeed;
+            physics.shoot(vx, vy, {x: 0, y: 0}, 1, {});
+            for (let step = 0; step < 3241 && physics.active; step++) physics.step(STEP);
+            if (physics.pocketed.some(id => id > 0) && !physics.pocketed.includes(0)) {
+                return {vx, vy, fullPullCss: state.fullPullCss, tableWidth: table.w, tableHeight: table.h};
+            }
+        }
+        return null;
+    }""")
+
 def begin_floating_pull(page, pointer_id, pull_fraction=.75):
     box = page.locator("#game").bounding_box()
     state = page.evaluate("window.__TRI_ECHO__.state()")
@@ -56,6 +82,87 @@ def begin_floating_pull(page, pointer_id, pull_fraction=.75):
 
 with sync_playwright() as p:
     browser = p.chromium.launch(headless=True)
+    # PR7: the first session names TRI//ECHO's persistent-table premise before
+    # play, then teaches it only in a Rail-capable mode.
+    product_context = browser.new_context(viewport={"width": 390, "height": 844})
+    product_page = product_context.new_page()
+    product_page.goto(ROOT, wait_until="networkidle")
+    assert "EMBOCA. RECONFIGURA. A MESA LEMBRA-SE." in " ".join(product_page.locator("#menu").inner_text().split())
+    assert "Rails temporários" in product_page.locator(".product-premise").inner_text()
+    product_page.locator("#playBtn").click()
+    take_short_shot(product_page)
+    product_page.wait_for_function("document.querySelector('#coachTitle').textContent === 'A MESA LEMBRA-SE'")
+    assert "Echo Rails" in product_page.locator("#coachText").inner_text()
+    product_page.screenshot(path=str(OUT / "pr7-first-session-memory-coach.png"), full_page=True)
+    product_page.close()
+    product_context.close()
+
+    # Creation and inheritance are distinct UI moments, both driven by a real
+    # Daily physics shot followed by the production completeHole/newHole path.
+    memory_context = browser.new_context(viewport={"width": 412, "height": 915})
+    memory_page = memory_context.new_page()
+    memory_page.goto(ROOT, wait_until="networkidle")
+    memory_page.locator("#mode").select_option("daily")
+    memory_page.locator("#playBtn").click()
+    memory_page.evaluate("""() => {
+        window.__pr7EchoTitles = [];
+        new MutationObserver(() => {
+            const title = document.querySelector('#echoMemoryTitle').textContent;
+            if (title) window.__pr7EchoTitles.push(title);
+        }).observe(document.querySelector('#echoMemoryTitle'), {childList: true, characterData: true, subtree: true});
+    }""")
+    winning_velocity = find_real_daily_win(memory_page)
+    assert winning_velocity is not None, "no deterministic winning Daily shot found"
+    take_velocity_shot(memory_page, winning_velocity, 301)
+    memory_page.wait_for_function("window.__TRI_ECHO__.state().holeIndex === 1 && window.__TRI_ECHO__.state().rails > 0 && document.querySelector('#echoMemoryTitle').textContent === 'MESA RECONFIGURADA'", timeout=25000)
+    memory_titles = memory_page.evaluate("window.__pr7EchoTitles")
+    assert "ECHO RAIL CRIADO" in memory_titles
+    assert "MESA RECONFIGURADA" in memory_titles
+    assert "ECHO RAIL ATIVO" in memory_page.locator("#echoMemoryText").inner_text()
+    memory_page.screenshot(path=str(OUT / "pr7-inherited-rail.png"), full_page=True)
+    memory_page.close()
+    memory_context.close()
+
+    # Negative product states stay truthful: neither an unqualified Echo shot
+    # nor a traditional carom can claim a persistent Rail.
+    negative_context = browser.new_context(viewport={"width": 1024, "height": 800})
+    negative_page = negative_context.new_page()
+    negative_page.goto(f"{ROOT}?triEchoTest=1", wait_until="networkidle")
+    negatives = negative_page.evaluate("""() => {
+        const api = window.__TRI_ECHO_TEST__;
+        api.startFixture({mode: 'golf'});
+        const noRail = api.resolveShot({});
+        const noRailCue = document.querySelector('#echoMemory').classList.contains('show');
+        const classic = api.startFixture({mode: 'classic'});
+        api.resolveShot({contacts: classic.ballState.slice(1).map(ball => ball.id)});
+        return {noRail, noRailCue, traditionalCue: document.querySelector('#echoMemory').classList.contains('show')};
+    }""")
+    assert negatives["noRail"]["rails"] == 0 and negatives["noRailCue"] is False
+    assert negatives["traditionalCue"] is False
+    negative_page.close()
+    negative_context.close()
+
+    # Reduced motion keeps the inherited-Rail state textual and visible without
+    # relying on the cue transition.
+    reduced_context = browser.new_context(viewport={"width": 430, "height": 932})
+    reduced_page = reduced_context.new_page()
+    reduced_page.goto(ROOT, wait_until="networkidle")
+    reduced_page.locator("#openSettings").click()
+    reduced_page.locator("#reduced").check()
+    reduced_page.locator("#settings .close").click()
+    reduced_page.locator("#mode").select_option("daily")
+    reduced_page.locator("#playBtn").click()
+    reduced_velocity = find_real_daily_win(reduced_page)
+    assert reduced_velocity is not None, "no deterministic reduced-motion Daily shot found"
+    take_velocity_shot(reduced_page, reduced_velocity, 302)
+    reduced_page.wait_for_function("window.__TRI_ECHO__.state().holeIndex === 1 && document.querySelector('#echoMemoryTitle').textContent === 'MESA RECONFIGURADA'", timeout=25000)
+    assert "ECHO RAIL ATIVO" in reduced_page.locator("#echoMemoryText").inner_text()
+    assert reduced_page.locator("#echoMemory").evaluate("element => element.classList.contains('reduced')") is True
+    assert reduced_page.locator("#echoMemory").evaluate("element => getComputedStyle(element).transitionDuration") == "0s"
+    reduced_page.screenshot(path=str(OUT / "pr7-reduced-motion-inherited-rail.png"), full_page=True)
+    reduced_page.close()
+    reduced_context.close()
+
     # The deterministic seam is absent from an ordinary local launch, and is
     # available only after the explicit local test opt-in.  Its resolution
     # path below uses the live Game instance rather than a copied rules model.
