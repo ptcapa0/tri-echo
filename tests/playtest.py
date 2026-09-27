@@ -82,6 +82,23 @@ with sync_playwright() as p:
     assert rewind_state["strokes"] == 0 and rewind_state["totalStrokes"] == 0
     assert rewind_state["inventory"]["rewind"] == 0 and rewind_state["activePower"] is None
     assert all(not ball["pocketed"] for ball in rewind_state["ballState"])
+    persistent = seam_page.evaluate("""() => {
+        const api = window.__TRI_ECHO_TEST__, started = api.startFixture({mode: 'american'});
+        const solids = started.ballState.filter((ball, index) => started.roles[index] === 'solid');
+        const eight = started.ballState.find((ball, index) => started.roles[index] === 'eight');
+        api.configureFixture({ruleState: {group: 'solid', phase: 'open'}});
+        api.seedPocketedObjectBalls(solids.map(ball => ball.id));
+        return {state: api.resolveShot({pocketedIds: [eight.id], contacts: [eight.id], firstCollision: eight.id}), eightId: eight.id, solidIds: solids.map(ball => ball.id)};
+    }""")
+    persistent_state = persistent["state"]
+    assert persistent_state["pocketed"] == [persistent["eightId"]]
+    assert all(next(ball["pocketed"] for ball in persistent_state["ballState"] if ball["id"] == ball_id) for ball_id in persistent["solidIds"] + [persistent["eightId"]])
+    errors = seam_page.evaluate("""() => {
+        const api = window.__TRI_ECHO_TEST__, failures = [];
+        for (const value of [0, [999], 'bad']) try { api.seedPocketedObjectBalls(value); } catch { failures.push(true); }
+        return failures.length;
+    }""")
+    assert errors == 3
     seam_page.close()
     for name, viewport in [("iphone", {"width": 390, "height": 844}), ("android", {"width": 412, "height": 915}), ("wide-android", {"width": 430, "height": 932}), ("desktop", {"width": 1024, "height": 800})]:
         page = browser.new_page(viewport=viewport, device_scale_factor=1)
