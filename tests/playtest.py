@@ -329,6 +329,169 @@ with sync_playwright() as p:
     }""", timeout=5000)
     assert snooker_page.evaluate("window.__TRI_ECHO_TEST__.state().score") == 7
     snooker_page.close()
+
+    # PR6.0 Checkpoint B: classic outcomes reach finishClassic through the
+    # live resolver.  Contact facts are production shot facts, not a second
+    # carom implementation.
+    classic_page = browser.new_page(viewport={"width": 1024, "height": 800})
+    classic_page.goto(f"{ROOT}?triEchoTest=1", wait_until="networkidle")
+    classic = classic_page.evaluate("""() => {
+        const api = window.__TRI_ECHO_TEST__, cases = {};
+        let state = api.startFixture({mode: 'classic'});
+        cases.success = api.resolveShot({contacts: state.ballState.slice(1).map(ball => ball.id)});
+        return cases;
+    }""")
+    assert classic["success"]["score"] == 1
+    assert classic["success"]["holeIndex"] == 1 and classic["success"]["interactionLocked"] is True
+    classic_page.wait_for_function("window.__TRI_ECHO_TEST__.state().holeIndex === 1 && !window.__TRI_ECHO_TEST__.state().interactionLocked", timeout=5000)
+    assert classic_page.locator("#streak").text_content() == "1"
+    classic_repeat = classic_page.evaluate("""() => {
+        const api = window.__TRI_ECHO_TEST__, state = api.state();
+        return api.resolveShot({contacts: state.ballState.slice(1).map(ball => ball.id)});
+    }""")
+    assert classic_repeat["score"] == 2 and classic_repeat["holeIndex"] == 2
+    classic_page.wait_for_function("window.__TRI_ECHO_TEST__.state().holeIndex === 2 && !window.__TRI_ECHO_TEST__.state().interactionLocked", timeout=5000)
+    assert classic_page.locator("#streak").text_content() == "2"
+    classic_page.close()
+
+    classic_failures_page = browser.new_page(viewport={"width": 1024, "height": 800})
+    classic_failures_page.goto(f"{ROOT}?triEchoTest=1", wait_until="networkidle")
+    classic_failures = classic_failures_page.evaluate("""() => {
+        const api = window.__TRI_ECHO_TEST__, cases = {};
+        let state = api.startFixture({mode: 'classic'});
+        cases.miss = api.resolveShot({contacts: [state.ballState[1].id]});
+        state = api.startFixture({mode: 'classic'});
+        cases.scratch = api.resolveShot({pocketedIds: [state.ballState[0].id], contacts: state.ballState.slice(1).map(ball => ball.id)});
+        return cases;
+    }""")
+    assert classic_failures["miss"]["score"] == 0
+    assert classic_failures["scratch"]["score"] == 0
+    classic_failures_page.close()
+
+    # Hybrid uses its real carom-to-pocket transition before the phase-two
+    # completion case.  Direct phase fixtures cover resolver-only failures.
+    hybrid_page = browser.new_page(viewport={"width": 1024, "height": 800})
+    hybrid_page.goto(f"{ROOT}?triEchoTest=1", wait_until="networkidle")
+    hybrid = hybrid_page.evaluate("""() => {
+        const api = window.__TRI_ECHO_TEST__, cases = {};
+        let state = api.startFixture({mode: 'hybrid'});
+        cases.initial = state;
+        cases.caromSuccess = api.resolveShot({contacts: state.ballState.slice(1).map(ball => ball.id)});
+
+        state = api.startFixture({mode: 'hybrid'});
+        cases.caromMiss = api.resolveShot({contacts: [state.ballState[1].id]});
+        state = api.startFixture({mode: 'hybrid'});
+        cases.caromScratch = api.resolveShot({pocketedIds: [state.ballState[0].id], contacts: state.ballState.slice(1).map(ball => ball.id)});
+
+        state = api.startFixture({mode: 'hybrid'});
+        const transitioned = api.resolveShot({contacts: state.ballState.slice(1).map(ball => ball.id)});
+        api.configureFixture({totalStrokes: 5});
+        cases.pocketSuccess = api.resolveShot({pocketedIds: [transitioned.ballState[1].id], contacts: [transitioned.ballState[1].id], firstCollision: transitioned.ballState[1].id});
+
+        state = api.startFixture({mode: 'hybrid'});
+        api.configureFixture({hybridPhase: 'pocket'});
+        cases.pocketMiss = api.resolveShot({});
+        state = api.startFixture({mode: 'hybrid'});
+        api.configureFixture({hybridPhase: 'pocket'});
+        cases.pocketScratch = api.resolveShot({pocketedIds: [state.ballState[0].id]});
+
+        state = api.startFixture({mode: 'hybrid'});
+        api.configureFixture({score: 7, streak: 2, ruleState: {phase: 'open', marker: 'fixture'}});
+        cases.preserved = api.resolveShot({contacts: state.ballState.slice(1).map(ball => ball.id)});
+        return cases;
+    }""")
+    assert hybrid["initial"]["hybridPhase"] == "carom" and hybrid["initial"]["hole"]["disabled"] is True
+    assert hybrid["caromSuccess"]["hybridPhase"] == "pocket"
+    assert hybrid["caromSuccess"]["hole"]["disabled"] is False
+    assert hybrid["caromMiss"]["hybridPhase"] == "carom" and hybrid["caromMiss"]["score"] == 0
+    assert hybrid["caromScratch"]["hybridPhase"] == "carom" and hybrid["caromScratch"]["score"] == 0
+    assert hybrid["pocketSuccess"]["holeIndex"] == 1
+    assert hybrid["pocketSuccess"]["score"] == 5 - hybrid["pocketSuccess"]["par"]
+    assert hybrid["pocketMiss"]["hybridPhase"] == "pocket" and hybrid["pocketMiss"]["score"] == 0
+    assert hybrid["pocketScratch"]["hybridPhase"] == "pocket" and hybrid["pocketScratch"]["score"] == 0
+    assert hybrid["preserved"]["hybridPhase"] == "pocket" and hybrid["preserved"]["score"] == 7
+    assert hybrid["preserved"]["ruleState"] == {"phase": "open", "marker": "fixture"}
+    hybrid_page.close()
+
+    # Training uses finishTraining only for Golf and Classic; the cue-sport
+    # disciplines deliberately dispatch to the American/British resolvers.
+    training_page = browser.new_page(viewport={"width": 1024, "height": 800})
+    training_page.goto(f"{ROOT}?triEchoTest=1", wait_until="networkidle")
+    training = training_page.evaluate("""() => {
+        const api = window.__TRI_ECHO_TEST__, cases = {};
+        let state = api.startFixture({mode: 'training', trainingDiscipline: 'golf'});
+        const golfObject = state.ballState[1];
+        cases.golfSuccess = api.resolveShot({pocketedIds: [golfObject.id], contacts: [golfObject.id], firstCollision: golfObject.id});
+        state = api.startFixture({mode: 'training', trainingDiscipline: 'golf'});
+        cases.golfMiss = api.resolveShot({});
+        state = api.startFixture({mode: 'training', trainingDiscipline: 'golf'});
+        cases.golfScratch = api.resolveShot({pocketedIds: [state.ballState[0].id]});
+
+        state = api.startFixture({mode: 'training', trainingDiscipline: 'classic'});
+        cases.classicSuccess = api.resolveShot({contacts: state.ballState.slice(1).map(ball => ball.id)});
+        state = api.startFixture({mode: 'training', trainingDiscipline: 'classic'});
+        cases.classicMiss = api.resolveShot({contacts: [state.ballState[1].id]});
+        state = api.startFixture({mode: 'training', trainingDiscipline: 'classic'});
+        cases.classicScratch = api.resolveShot({pocketedIds: [state.ballState[0].id], contacts: state.ballState.slice(1).map(ball => ball.id)});
+
+        state = api.startFixture({mode: 'training', trainingDiscipline: 'american'});
+        const solid = state.ballState.find((ball, index) => state.roles[index] === 'solid');
+        cases.american = api.resolveShot({pocketedIds: [solid.id], contacts: [solid.id], firstCollision: solid.id});
+        state = api.startFixture({mode: 'training', trainingDiscipline: 'snooker'});
+        const red = state.ballState.find((ball, index) => state.roles[index] === 'red');
+        cases.snooker = api.resolveShot({pocketedIds: [red.id], contacts: [red.id], firstCollision: red.id});
+        return cases;
+    }""")
+    assert training["golfSuccess"]["mode"] == "training" and training["golfSuccess"]["score"] == 1
+    assert not training["golfSuccess"]["ballState"][1]["pocketed"]
+    assert training["golfMiss"]["score"] == 0 and training["golfScratch"]["score"] == 0
+    assert not training["golfScratch"]["ballState"][0]["pocketed"]
+    assert training["classicSuccess"]["score"] == 1
+    assert training["classicMiss"]["score"] == 0 and training["classicScratch"]["score"] == 0
+    assert training["american"]["mode"] == "training" and training["american"]["ruleState"]["group"] == "solid" and training["american"]["score"] == 1
+    assert training["snooker"]["mode"] == "training" and training["snooker"]["ruleState"]["phase"] == "color" and training["snooker"]["score"] == 1
+    training_page.close()
+
+    training_continuation_page = browser.new_page(viewport={"width": 1024, "height": 800})
+    training_continuation_page.goto(f"{ROOT}?triEchoTest=1", wait_until="networkidle")
+    training_continuation = training_continuation_page.evaluate("""() => {
+        const api = window.__TRI_ECHO_TEST__, state = api.startFixture({mode: 'training', trainingDiscipline: 'golf'}), object = state.ballState[1];
+        return api.resolveShot({pocketedIds: [object.id], contacts: [object.id], firstCollision: object.id});
+    }""")
+    assert training_continuation["interactionLocked"] is True and training_continuation["score"] == 1
+    training_continuation_page.wait_for_function("window.__TRI_ECHO_TEST__.state().canAcceptGameplayInput", timeout=5000)
+    resumed_training = training_continuation_page.evaluate("window.__TRI_ECHO_TEST__.state()")
+    assert resumed_training["mode"] == "training" and resumed_training["score"] == 1
+    assert not resumed_training["ballState"][1]["pocketed"]
+    training_continuation_page.close()
+
+    # The pure requirement boundaries live in core.test.js; these two cases
+    # freeze the distinct real Game.finishTrick lifecycle.
+    trick_page = browser.new_page(viewport={"width": 1024, "height": 800})
+    trick_page.goto(f"{ROOT}?triEchoTest=1", wait_until="networkidle")
+    trick = trick_page.evaluate("""() => {
+        const api = window.__TRI_ECHO_TEST__, cases = {};
+        let state = api.startFixture({mode: 'trick'});
+        api.configureFixture({strokes: 3, score: 7});
+        cases.success = api.resolveShot({pocketedIds: [state.ballState[1].id], contacts: state.ballState.slice(1).map(ball => ball.id), firstCollision: state.ballState[1].id, objectCushions: 1, cueCushionsBeforeContact: 1, objectContacts: 1});
+        return cases;
+    }""")
+    assert trick["success"]["score"] == 927 and trick["success"]["holeIndex"] == 1
+    assert trick["success"]["interactionLocked"] is True
+    trick_page.wait_for_function("window.__TRI_ECHO_TEST__.state().holeIndex === 1 && !window.__TRI_ECHO_TEST__.state().interactionLocked", timeout=5000)
+    assert trick_page.evaluate("window.__TRI_ECHO_TEST__.state().score") == 927
+    trick_page.close()
+
+    trick_failure_page = browser.new_page(viewport={"width": 1024, "height": 800})
+    trick_failure_page.goto(f"{ROOT}?triEchoTest=1", wait_until="networkidle")
+    trick_failure = trick_failure_page.evaluate("""() => {
+        const api = window.__TRI_ECHO_TEST__, state = api.startFixture({mode: 'trick'}), initialBalls = structuredClone(state.ballState);
+        api.configureFixture({score: 7});
+        return {state: api.resolveShot({}), initialBalls};
+    }""")
+    assert trick_failure["state"]["score"] == 7 and trick_failure["state"]["ballState"] == trick_failure["initialBalls"]
+    assert trick_failure["state"]["interactionLocked"] is False
+    trick_failure_page.close()
     for name, viewport in [("iphone", {"width": 390, "height": 844}), ("android", {"width": 412, "height": 915}), ("wide-android", {"width": 430, "height": 932}), ("desktop", {"width": 1024, "height": 800})]:
         page = browser.new_page(viewport=viewport, device_scale_factor=1)
         errors = []
