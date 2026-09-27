@@ -492,6 +492,74 @@ with sync_playwright() as p:
     assert trick_failure["state"]["score"] == 7 and trick_failure["state"]["ballState"] == trick_failure["initialBalls"]
     assert trick_failure["state"]["interactionLocked"] is False
     trick_failure_page.close()
+
+    # PR6.0 Checkpoint C: capture a real production pre-shot table containing
+    # historical pocket state, then let the real classic miss select rewind.
+    rewind_page = browser.new_page(viewport={"width": 1024, "height": 800})
+    rewind_page.goto(f"{ROOT}?triEchoTest=1", wait_until="networkidle")
+    rewind = rewind_page.evaluate("""() => {
+        const api = window.__TRI_ECHO_TEST__, started = api.startFixture({mode: 'classic'}), [prior, current] = started.ballState.slice(1);
+        const ruleState = {phase: 'fixture', marker: 'rewind'};
+        api.seedPocketedObjectBalls([prior.id]);
+        api.configureFixture({ruleState, hybridPhase: 'fixture-phase', activePower: 'rewind', inventory: {...started.inventory, rewind: 1}, strokes: 3, totalStrokes: 9});
+        api.captureFixturePreShot();
+        return {state: api.resolveShot({pocketedIds: [current.id], contacts: [prior.id], firstCollision: prior.id}), priorId: prior.id, currentId: current.id, ruleState};
+    }""")
+    assert rewind["state"]["strokes"] == 2 and rewind["state"]["totalStrokes"] == 8
+    assert rewind["state"]["inventory"]["rewind"] == 0 and rewind["state"]["activePower"] is None
+    assert next(ball["pocketed"] for ball in rewind["state"]["ballState"] if ball["id"] == rewind["priorId"])
+    assert not next(ball["pocketed"] for ball in rewind["state"]["ballState"] if ball["id"] == rewind["currentId"])
+    assert rewind["state"]["pocketed"] == []
+    # Classic miss does not itself mutate these fields; the production rewind
+    # leaves them intact while restoring only the captured table snapshot.
+    assert rewind["state"]["ruleState"] == rewind["ruleState"] and rewind["state"]["hybridPhase"] == "fixture-phase"
+    rewind_page.close()
+
+    # safeReset receives current-shot IDs only.  It must respawn that ball
+    # without reviving an object pocketed before the shot.
+    reset_page = browser.new_page(viewport={"width": 1024, "height": 800})
+    reset_page.goto(f"{ROOT}?triEchoTest=1", wait_until="networkidle")
+    reset = reset_page.evaluate("""() => {
+        const api = window.__TRI_ECHO_TEST__, started = api.startFixture({mode: 'classic'}), [prior, current] = started.ballState.slice(1);
+        api.seedPocketedObjectBalls([prior.id]);
+        return {state: api.resolveShot({pocketedIds: [current.id], contacts: [prior.id], firstCollision: prior.id}), priorId: prior.id, currentId: current.id};
+    }""")
+    assert reset["state"]["interactionLocked"] is True
+    reset_page.wait_for_function("window.__TRI_ECHO_TEST__.state().canAcceptGameplayInput", timeout=5000)
+    reset_after = reset_page.evaluate("window.__TRI_ECHO_TEST__.state()")
+    assert next(ball["pocketed"] for ball in reset_after["ballState"] if ball["id"] == reset["priorId"])
+    assert not next(ball["pocketed"] for ball in reset_after["ballState"] if ball["id"] == reset["currentId"])
+    reset_page.close()
+
+    reset_scratch_page = browser.new_page(viewport={"width": 1024, "height": 800})
+    reset_scratch_page.goto(f"{ROOT}?triEchoTest=1", wait_until="networkidle")
+    reset_scratch = reset_scratch_page.evaluate("""() => {
+        const api = window.__TRI_ECHO_TEST__, state = api.startFixture({mode: 'classic'});
+        return api.resolveShot({pocketedIds: [state.ballState[0].id], contacts: [state.ballState[1].id], firstCollision: state.ballState[1].id});
+    }""")
+    assert reset_scratch["interactionLocked"] is True
+    reset_scratch_page.wait_for_function("window.__TRI_ECHO_TEST__.state().canAcceptGameplayInput", timeout=5000)
+    assert not reset_scratch_page.evaluate("window.__TRI_ECHO_TEST__.state().ballState[0].pocketed")
+    reset_scratch_page.close()
+
+    # restartHole invokes the production hole-start snapshot/restore path.
+    restart_page = browser.new_page(viewport={"width": 1024, "height": 800})
+    restart_page.goto(f"{ROOT}?triEchoTest=1", wait_until="networkidle")
+    restarted = restart_page.evaluate("""() => {
+        const api = window.__TRI_ECHO_TEST__, started = api.startFixture({mode: 'hybrid'}), object = started.ballState[1];
+        api.configureFixture({score: 12, streak: 4, strokes: 3, totalStrokes: 8, activePower: 'trace', inventory: {...started.inventory, trace: 0}, ruleState: {phase: 'changed'}, hybridPhase: 'pocket'});
+        api.seedPocketedObjectBalls([object.id]);
+        const accepted = api.restartHole();
+        return {accepted, state: api.state()};
+    }""")
+    assert restarted["accepted"] is True
+    assert restarted["state"]["score"] == 0 and restarted["state"]["strokes"] == 0 and restarted["state"]["totalStrokes"] == 0
+    assert restarted["state"]["activePower"] is None and restarted["state"]["inventory"]["trace"] == 1
+    assert restarted["state"]["ruleState"] == {"phase": "open", "reds": 15, "colourIndex": 0}
+    assert restarted["state"]["hybridPhase"] == "carom"
+    assert all(not ball["pocketed"] for ball in restarted["state"]["ballState"])
+    assert restarted["state"]["canAcceptGameplayInput"] is True
+    restart_page.close()
     for name, viewport in [("iphone", {"width": 390, "height": 844}), ("android", {"width": 412, "height": 915}), ("wide-android", {"width": 430, "height": 932}), ("desktop", {"width": 1024, "height": 800})]:
         page = browser.new_page(viewport=viewport, device_scale_factor=1)
         errors = []
