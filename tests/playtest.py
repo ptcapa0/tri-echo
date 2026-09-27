@@ -219,6 +219,9 @@ with sync_playwright() as p:
         scenarios.redWrongContact = api.resolveShot({contacts: [black.id], firstCollision: black.id});
 
         state = api.startFixture({mode: 'british'});
+        scenarios.redScratch = api.resolveShot({pocketedIds: [state.ballState[0].id]});
+
+        state = api.startFixture({mode: 'british'});
         black = role(state, 'black');
         scenarios.redColourPot = api.resolveShot({pocketedIds: [black.id], contacts: [black.id], firstCollision: black.id});
         scenarios.blackId = black.id;
@@ -291,6 +294,9 @@ with sync_playwright() as p:
     assert snooker["multipleReds"]["ruleState"]["phase"] == "color"
     assert snooker["redWrongContact"]["score"] == 0
     assert snooker["redWrongContact"]["ruleState"]["phase"] == "red"
+    assert snooker["redScratch"]["score"] == 0
+    assert snooker["redScratch"]["ruleState"]["phase"] == "red"
+    assert not snooker["redScratch"]["ballState"][0]["pocketed"]
     assert snooker["redColourPot"]["score"] == 0
     assert not next(ball["pocketed"] for ball in snooker["redColourPot"]["ballState"] if ball["id"] == snooker["blackId"])
     assert snooker["colourPot"]["score"] == 7
