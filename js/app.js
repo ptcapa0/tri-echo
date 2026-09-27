@@ -227,12 +227,20 @@ if(isLocalTestSeam(window.location)){
    updateHUD();return this.state();
   },
   captureFixturePreShot(){if(!game)throw new Error('fixture game has not started');game.capturePreShot();return this.state()},
+  seedPocketedObjectBalls(ids){
+   if(!game)throw new Error('fixture game has not started');
+   if(!Array.isArray(ids))throw new Error('pocketed object ids must be an array');
+   const cueId=game.table.balls[0]?.id,balls=new Map(game.table.balls.map(ball=>[ball.id,ball]));
+   for(const id of ids){const ball=balls.get(id);if(!ball||id===cueId)throw new Error('invalid pocketed object id')}
+   for(const id of new Set(ids))balls.get(id).pocketed=true;
+   return this.state();
+  },
   resolveShot({pocketedIds=[],contacts=[],firstCollision=null,cushions=0,objectCushions=0,cueCushionsBeforeContact=0,objectContacts=0}={}){
    if(!game)throw new Error('fixture game has not started');
    if(!Array.isArray(pocketedIds)||!Array.isArray(contacts))throw new Error('shot facts must be arrays');
    const validIds=new Set(game.table.balls.map(ball=>ball.id));
    if(!pocketedIds.every(id=>validIds.has(id))||!contacts.every(id=>validIds.has(id))||(firstCollision!==null&&!validIds.has(firstCollision)))throw new Error('shot facts reference an unknown ball');
-   for(const ball of game.table.balls)ball.pocketed=pocketedIds.includes(ball.id);
+   for(const id of pocketedIds)game.table.balls.find(ball=>ball.id===id).pocketed=true;
    Object.assign(game.physics,{pocketed:[...pocketedIds],contacts:new Set(contacts),firstCollision,cushions,objectCushions,cueCushionsBeforeContact,objectContacts,active:false});
    game.finish();return this.state();
   },
