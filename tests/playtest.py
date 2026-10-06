@@ -114,12 +114,28 @@ with sync_playwright() as p:
     winning_velocity = find_real_daily_win(memory_page)
     assert winning_velocity is not None, "no deterministic winning Daily shot found"
     take_velocity_shot(memory_page, winning_velocity, 301)
-    memory_page.wait_for_function("window.__TRI_ECHO__.state().holeIndex === 1 && window.__TRI_ECHO__.state().rails > 0 && document.querySelector('#echoMemoryTitle').textContent === 'MESA RECONFIGURADA'", timeout=25000)
+    memory_page.wait_for_function("window.__TRI_ECHO__.state().echoMemory.kind === 'created'", timeout=25000)
+    assert memory_page.evaluate("window.__TRI_ECHO__.state().echoMemory.highlightedRails") == 1
+    memory_page.wait_for_timeout(210)
+    memory_page.screenshot(path=str(OUT / "pr71-created-rail.png"), full_page=True)
+    memory_page.wait_for_function("window.__TRI_ECHO__.state().holeIndex === 1 && window.__TRI_ECHO__.state().rails > 0 && document.querySelector('#echoMemoryTitle').textContent === 'ECHO DA MESA ANTERIOR'", timeout=25000)
     memory_titles = memory_page.evaluate("window.__pr7EchoTitles")
-    assert "ECHO RAIL CRIADO" in memory_titles
-    assert "MESA RECONFIGURADA" in memory_titles
-    assert "ECHO RAIL ATIVO" in memory_page.locator("#echoMemoryText").inner_text()
+    assert "A TUA TACADA CRIOU UM ECHO RAIL" in memory_titles
+    assert "ECHO DA MESA ANTERIOR" in memory_titles
+    assert "A tua linha passou para esta mesa" in memory_page.locator("#echoMemoryText").inner_text()
     memory_page.screenshot(path=str(OUT / "pr7-inherited-rail.png"), full_page=True)
+    inherited = memory_page.evaluate("window.__TRI_ECHO__.state()")
+    assert inherited["echoMemory"]["kind"] == "inherited"
+    assert inherited["echoMemory"]["highlightedRails"] == inherited["rails"]
+    assert inherited["canAcceptGameplayInput"] is True
+    assert memory_page.locator("#echoMemory").evaluate("e => getComputedStyle(e).pointerEvents") == "none"
+    begin_floating_pull(memory_page, 303)
+    assert memory_page.evaluate("window.__TRI_ECHO__.state().dragActive") is True
+    memory_page.dispatch_event("#game", "pointercancel", {"pointerId": 303})
+    memory_page.locator("#retryBtn").click()
+    assert memory_page.evaluate("window.__TRI_ECHO__.state().echoMemory.kind") is None
+    memory_page.wait_for_timeout(2300)
+    assert memory_page.evaluate("window.__TRI_ECHO__.state().echoMemory.highlightedRails") == 0
     memory_page.close()
     memory_context.close()
 
@@ -132,13 +148,16 @@ with sync_playwright() as p:
         const api = window.__TRI_ECHO_TEST__;
         api.startFixture({mode: 'golf'});
         const noRail = api.resolveShot({});
+        const failedCreation = api.resolveShot({pocketedIds: [1]});
+        const failedCreationCue = document.querySelector('#echoMemory').classList.contains('show');
         const noRailCue = document.querySelector('#echoMemory').classList.contains('show');
         const classic = api.startFixture({mode: 'classic'});
         api.resolveShot({contacts: classic.ballState.slice(1).map(ball => ball.id)});
-        return {noRail, noRailCue, traditionalCue: document.querySelector('#echoMemory').classList.contains('show')};
+        return {noRail, noRailCue, failedCreation, failedCreationCue, traditionalCue: document.querySelector('#echoMemory').classList.contains('show')};
     }""")
     assert negatives["noRail"]["rails"] == 0 and negatives["noRailCue"] is False
     assert negatives["traditionalCue"] is False
+    assert negatives["failedCreation"]["rails"] == 0 and negatives["failedCreationCue"] is False
     negative_page.close()
     negative_context.close()
 
@@ -155,8 +174,8 @@ with sync_playwright() as p:
     reduced_velocity = find_real_daily_win(reduced_page)
     assert reduced_velocity is not None, "no deterministic reduced-motion Daily shot found"
     take_velocity_shot(reduced_page, reduced_velocity, 302)
-    reduced_page.wait_for_function("window.__TRI_ECHO__.state().holeIndex === 1 && document.querySelector('#echoMemoryTitle').textContent === 'MESA RECONFIGURADA'", timeout=25000)
-    assert "ECHO RAIL ATIVO" in reduced_page.locator("#echoMemoryText").inner_text()
+    reduced_page.wait_for_function("window.__TRI_ECHO__.state().holeIndex === 1 && document.querySelector('#echoMemoryTitle').textContent === 'ECHO DA MESA ANTERIOR'", timeout=25000)
+    assert "A tua linha passou para esta mesa" in reduced_page.locator("#echoMemoryText").inner_text()
     assert reduced_page.locator("#echoMemory").evaluate("element => element.classList.contains('reduced')") is True
     assert reduced_page.locator("#echoMemory").evaluate("element => getComputedStyle(element).transitionDuration") == "0s"
     reduced_page.screenshot(path=str(OUT / "pr7-reduced-motion-inherited-rail.png"), full_page=True)
