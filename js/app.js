@@ -199,16 +199,56 @@ function updateHUD(){if(!game)return;const kind=game.info.kind,cueKind=game.cueS
  $('#scoreLabel').textContent=game.info.competitive?'PONTOS':'RESULTADO';$('#score').textContent=game.info.competitive?game.score:formatDelta(game.score);$('#streakLabel').textContent='TACADAS';$('#streak').textContent=game.strokes;$('#statusLabel').textContent='PAR';$('#status').textContent=game.par;$('#objective').textContent=game.hybridPhase==='carom'?'FASE 1 · BILHAR DE 3 BOLAS':`OBJETIVO ${game.holeIndex+1} · EMBOCA UMA COR`}
 function formatDelta(n){return n===0?'E':n>0?`+${n}`:String(n)}
 function updateContinue(){const resumable=!!game&&!game.finished;$('#continueBtn').classList.toggle('hidden',!resumable)}
-function start(){cancelActivePointers();game?.invalidateRoundTasks();data.mode=$('#mode').value;if(data.mode!=='daily'){data.difficulty=$('#difficulty').value;data.tableStyle=$('#tableStyle').value}data.trainingDiscipline=$('#trainingDiscipline').value;data.trickDiscipline=$('#trickDiscipline').value;save(data);contact={x:0,y:0};game=new Game();renderPowers();updateHUD();updateContactUI();placeContact();$('#contactControl').classList.remove('hidden');$('#menu').close();paused=false;syncGameplayControls();updateContinue();if(!data.tutorial)coach(1)}
-function continueGame(){if(!game||game.finished)return;cancelActivePointers();$('#menu').close();paused=false;syncGameplayControls()}
+function start(){cancelProgressImport();cancelActivePointers();game?.invalidateRoundTasks();data.mode=$('#mode').value;if(data.mode!=='daily'){data.difficulty=$('#difficulty').value;data.tableStyle=$('#tableStyle').value}data.trainingDiscipline=$('#trainingDiscipline').value;data.trickDiscipline=$('#trickDiscipline').value;save(data);contact={x:0,y:0};game=new Game();renderPowers();updateHUD();updateContactUI();placeContact();$('#contactControl').classList.remove('hidden');$('#menu').close();paused=false;syncGameplayControls();updateContinue();if(!data.tutorial)coach(1)}
+function continueGame(){if(!game||game.finished)return;cancelProgressImport();cancelActivePointers();$('#menu').close();paused=false;syncGameplayControls()}
 function openMenu(){hideEchoMemory();cancelActivePointers();paused=true;syncGameplayControls();updateContinue();if(!$('#menu').open)$('#menu').showModal()}
 function endGame(expectedGame=game,{completedDaily=false}={}){if(!expectedGame||game!==expectedGame)return;game.finished=true;if(completedDaily)completeDailyRun(data,{mode:game.mode,holeIndex:game.holeIndex,dayKey:game.dailyDayKey});data.best[game.mode]=Math.max(data.best[game.mode]||0,game.score);data.bestStreak=Math.max(data.bestStreak,game.streak);save(data);showToast(`VOLTA · ${game.score} PONTOS`);game.scheduleRoundTask(800,()=>{if(game===expectedGame)openMenu()})}
 function openSettings(){cancelActivePointers();paused=true;syncGameplayControls();$('#sound').checked=data.settings.sound;$('#haptics').checked=data.settings.haptics;$('#reduced').checked=data.settings.reducedMotion;if(!$('#settings').open)$('#settings').showModal()}
 
-canvas.addEventListener('pointerdown',down);canvas.addEventListener('pointermove',move);canvas.addEventListener('pointerup',up);canvas.addEventListener('pointercancel',cancelGameplayPointer);canvas.addEventListener('lostpointercapture',cancelGameplayPointer);$('#cueFace').addEventListener('pointerdown',contactDown);$('#cueFace').addEventListener('pointermove',contactMove);$('#cueFace').addEventListener('pointerup',contactUp);$('#cueFace').addEventListener('pointercancel',cancelContactPointer);$('#cueFace').addEventListener('lostpointercapture',cancelContactPointer);$('#moveContact').addEventListener('pointerdown',moveControlDown);$('#moveContact').addEventListener('pointermove',moveControl);$('#moveContact').addEventListener('pointerup',moveControlUp);$('#moveContact').addEventListener('pointercancel',cancelMovePointer);$('#moveContact').addEventListener('lostpointercapture',cancelMovePointer);window.addEventListener('resize',resize);window.addEventListener('pagehide',()=>{game?.invalidateRoundTasks();hideEchoMemory()});
-$('#playBtn').onclick=start;$('#continueBtn').onclick=continueGame;$('#settingsBtn').onclick=openSettings;$('#openSettings').onclick=openSettings;$('#homeBtn').onclick=openMenu;$('#retryBtn').onclick=()=>game?.restartHole();for(const b of document.querySelectorAll('dialog .close'))b.onclick=()=>{b.closest('dialog').close();paused=!game||$('#menu').open||$('#settings').open||$('#progress').open;syncGameplayControls()};
+canvas.addEventListener('pointerdown',down);canvas.addEventListener('pointermove',move);canvas.addEventListener('pointerup',up);canvas.addEventListener('pointercancel',cancelGameplayPointer);canvas.addEventListener('lostpointercapture',cancelGameplayPointer);$('#cueFace').addEventListener('pointerdown',contactDown);$('#cueFace').addEventListener('pointermove',contactMove);$('#cueFace').addEventListener('pointerup',contactUp);$('#cueFace').addEventListener('pointercancel',cancelContactPointer);$('#cueFace').addEventListener('lostpointercapture',cancelContactPointer);$('#moveContact').addEventListener('pointerdown',moveControlDown);$('#moveContact').addEventListener('pointermove',moveControl);$('#moveContact').addEventListener('pointerup',moveControlUp);$('#moveContact').addEventListener('pointercancel',cancelMovePointer);$('#moveContact').addEventListener('lostpointercapture',cancelMovePointer);window.addEventListener('resize',resize);window.addEventListener('pagehide',()=>{cancelProgressImport();game?.invalidateRoundTasks();hideEchoMemory()});
+$('#playBtn').onclick=start;$('#continueBtn').onclick=continueGame;$('#settingsBtn').onclick=openSettings;$('#openSettings').onclick=openSettings;$('#homeBtn').onclick=openMenu;$('#retryBtn').onclick=()=>game?.restartHole();for(const b of document.querySelectorAll('dialog .close'))b.onclick=()=>{cancelProgressImport();b.closest('dialog').close();paused=!game||$('#menu').open||$('#settings').open||$('#progress').open;syncGameplayControls()};
 $('#mode').innerHTML=Object.entries(MODES).map(([key,m])=>`<option value="${key}">${m.label}</option>`).join('');$('#mode').value=data.mode in MODES?data.mode:'golf';$('#difficulty').value=data.difficulty;$('#tableStyle').value=data.tableStyle||'echo';$('#trainingDiscipline').value=data.trainingDiscipline||'golf';$('#trickDiscipline').value=data.trickDiscipline||'golf';function modeCopy(){const daily=$('#mode').value==='daily',m=MODES[$('#mode').value];$('#modeDescription').textContent=daily?'A mesma volta diária para todos · Normal · Mesa Echo.':m.description;$('#tableStyleRow').classList.toggle('hidden',!m.tableChoice||daily);$('#difficultyRow').classList.toggle('hidden',daily);$('#trainingRow').classList.toggle('hidden',m.kind!=='training');$('#trickRow').classList.toggle('hidden',m.kind!=='trick')}$('#mode').onchange=modeCopy;modeCopy();
-$('#progressBtn').onclick=()=>{cancelActivePointers();paused=true;syncGameplayControls();const a=data.achievements.map(x=>`✓ ${x.id}`).join('<br>')||'Ainda sem conquistas';$('#stats').innerHTML=`Tacadas: ${data.stats.shots}<br>Objetivos: ${data.stats.successes}<br>Melhor série: ${data.bestStreak}<hr>${a}`;$('#progress').showModal()};$('#tutorialBtn').onclick=()=>{data.tutorial=false;save(data);$('#settings').close();paused=!game||$('#menu').open;syncGameplayControls();coach(1)};$('#sound').onchange=e=>{data.settings.sound=e.target.checked;applySoundSetting(audio,data.settings);save(data)};$('#haptics').onchange=e=>{data.settings.haptics=e.target.checked;save(data)};$('#reduced').onchange=e=>{data.settings.reducedMotion=e.target.checked;save(data)};$('#exportBtn').onclick=()=>{const u=URL.createObjectURL(exportSave(data)),a=document.createElement('a');a.href=u;a.download='tri-echo-progress.json';a.click();URL.revokeObjectURL(u)};$('#importFile').onchange=async e=>{try{data=await importSave(e.target.files[0]);applySoundSetting(audio,data.settings);save(data);showToast('PROGRESSO IMPORTADO')}catch{showToast('FICHEIRO INVÁLIDO')}};
+// Pending reads never outlive the modal that gates gameplay.
+let importRequest=0;
+function cancelProgressImport(){importRequest++;$('#importFile').value=''}
+for(const dialog of document.querySelectorAll('dialog')){
+ dialog.addEventListener('cancel',cancelProgressImport);
+ dialog.addEventListener('close',()=>{cancelProgressImport();paused=!game||$('#menu').open||$('#settings').open||$('#progress').open;syncGameplayControls()});
+}
+function renderProgress(){
+ const stats=$('#stats');stats.replaceChildren();stats.style.overflowWrap='anywhere';
+ for(const [label,value] of [['Tacadas',data.stats.shots],['Objetivos',data.stats.successes],['Melhor série',data.bestStreak]]){
+  const line=document.createElement('div');line.textContent=`${label}: ${value}`;stats.append(line);
+ }
+ stats.append(document.createElement('hr'));
+ if(!data.achievements.length)stats.append(document.createTextNode('Ainda sem conquistas'));
+ for(const achievement of data.achievements){const line=document.createElement('div');line.textContent=`✓ ${achievement.id}`;stats.append(line)}
+}
+function reconcileImportedPreferences(){
+ applySoundSetting(audio,data.settings);
+ $('#sound').checked=data.settings.sound;$('#haptics').checked=data.settings.haptics;$('#reduced').checked=data.settings.reducedMotion;
+ controlPos=data.settings.contactPos||{x:.76,y:.02};placeContact();
+ for(const id of ['mode','difficulty','tableStyle','trainingDiscipline','trickDiscipline'])$('#'+id).value=data[id];
+ modeCopy();if($('#progress').open)renderProgress();
+}
+$('#progressBtn').onclick=()=>{cancelActivePointers();paused=true;syncGameplayControls();renderProgress();$('#progress').showModal()};
+$('#tutorialBtn').onclick=()=>{cancelProgressImport();data.tutorial=false;save(data);$('#settings').close();paused=!game||$('#menu').open;syncGameplayControls();coach(1)};
+$('#sound').onchange=e=>{data.settings.sound=e.target.checked;applySoundSetting(audio,data.settings);save(data)};
+$('#haptics').onchange=e=>{data.settings.haptics=e.target.checked;save(data)};
+$('#reduced').onchange=e=>{data.settings.reducedMotion=e.target.checked;save(data)};
+$('#exportBtn').onclick=()=>{const u=URL.createObjectURL(exportSave(data)),a=document.createElement('a');a.href=u;a.download='tri-echo-progress.json';a.click();URL.revokeObjectURL(u)};
+$('#importFile').onchange=async e=>{
+ const file=e.target.files?.[0];if(!file)return;
+ const request=++importRequest;e.target.value='';
+ let candidate;
+ try{candidate=await importSave(file)}catch(error){if(request===importRequest)showToast(error?.code==='oversize'?'FICHEIRO DEMASIADO GRANDE':'FICHEIRO INVÁLIDO');return}
+ if(request!==importRequest)return;
+ // setItem is the sole commit point. No live mutation or rollback write precedes it.
+ try{save(candidate)}catch{showToast('NÃO FOI POSSÍVEL GUARDAR O PROGRESSO');return}
+ data=candidate;
+ try{reconcileImportedPreferences()}catch{showToast('PROGRESSO GUARDADO · ERRO AO ATUALIZAR CONTROLOS');return}
+ showToast('PROGRESSO IMPORTADO');
+};
 window.__TRI_ECHO__={state:()=>{
  if(!game)return null;
  const pull=floatingPull();

@@ -776,8 +776,8 @@ with sync_playwright() as p:
             assert page.locator(".power").count() == 0
         if name == "iphone":
             assert page.evaluate("navigator.serviceWorker.ready.then(() => true)")
-            assert "tri-echo-v4.7.0" in page.request.get(f"{ROOT}/sw.js").text()
-            assert "tri-echo-v4.7.0" in page.evaluate("caches.keys()")
+            assert "tri-echo-v4.7.1" in page.request.get(f"{ROOT}/sw.js").text()
+            assert "tri-echo-v4.7.1" in page.evaluate("caches.keys()")
             page.evaluate("caches.open('playtest-unrelated-cache')")
             page.evaluate("navigator.serviceWorker.getRegistration().then(registration => registration.unregister())")
             page.reload(wait_until="networkidle")
@@ -1370,6 +1370,329 @@ with sync_playwright() as p:
         assert len(results) == 18 and all(row["pot"] and row["entered"] and row["bounded"] for row in results), results
         assert errors == [], errors
         page.close()
+
+    # PR8: files go through the actual input handler.  These checks keep the
+    # hostile payload inert in both import and startup-localStorage paths,
+    # and observe browser diagnostics rather than relying on a toast alone.
+    hostile_id = '<img src=x onerror="window.auditImportExecuted=true">'
+    hostile_save = {
+        "stats": {"shots": 7, "successes": 3, "recent": [True, False]},
+        "bestStreak": 4,
+        "achievements": [{"id": hostile_id, "desc": "literal text"}],
+        "settings": {"sound": False, "haptics": False, "reducedMotion": True, "contactPos": {"x": .2, "y": .8}},
+        "mode": "classic", "difficulty": "hard", "tableStyle": "snooker",
+        "trainingDiscipline": "snooker", "trickDiscipline": "british"
+    }
+    import json
+    hostile_json = json.dumps(hostile_save)
+    for label, viewport in [("pr8-390", {"width": 390, "height": 844}), ("pr8-412", {"width": 412, "height": 915}), ("pr8-desktop", {"width": 1024, "height": 800})]:
+        context = browser.new_context(viewport=viewport)
+        page = context.new_page()
+        errors, payload_requests = [], []
+        page.on("console", lambda msg: errors.append(msg.text) if msg.type == "error" else None)
+        page.on("pageerror", lambda err: errors.append(str(err)))
+        page.on("request", lambda request: payload_requests.append(request.url) if request.url.endswith("/x") else None)
+        page.goto(ROOT, wait_until="networkidle")
+        page.locator("#openSettings").click()
+        page.locator("#importFile").set_input_files({"name": "hostile-progress.json", "mimeType": "application/json", "buffer": hostile_json.encode()})
+        page.wait_for_function("document.querySelector('#toast').textContent === 'PROGRESSO IMPORTADO'")
+        page.locator("#settings .close").click()
+        page.locator("#progressBtn").click()
+        page.wait_for_function("document.querySelector('#progress').open")
+        assert hostile_id in page.locator("#stats").inner_text()
+        assert page.locator("#stats img").count() == 0
+        assert page.locator("#stats script, #stats [onerror], #stats [onclick]").count() == 0
+        assert page.evaluate("window.auditImportExecuted === true") is False
+        assert payload_requests == [], payload_requests
+        assert errors == [], errors
+        bounds = page.locator("#stats").bounding_box()
+        assert bounds["x"] >= 0 and bounds["x"] + bounds["width"] <= viewport["width"] + 1
+        assert page.locator("#stats").evaluate("e => e.scrollWidth <= e.clientWidth") is True
+        page.screenshot(path=str(OUT / f"{label}-safe-progress.png"), full_page=True)
+        page.close()
+        context.close()
+
+    # A poisoned local save is normalized on startup too, without executing
+    # the marker once Progress renders it.
+    context = browser.new_context(viewport={"width": 390, "height": 844})
+    page = context.new_page()
+    errors, payload_requests = [], []
+    page.on("console", lambda msg: errors.append(msg.text) if msg.type == "error" else None)
+    page.on("pageerror", lambda err: errors.append(str(err)))
+    page.on("request", lambda request: payload_requests.append(request.url) if request.url.endswith("/x") else None)
+    page.add_init_script(f"localStorage.setItem('triEchoSaveV1', {json.dumps(hostile_json)})")
+    page.goto(ROOT, wait_until="networkidle")
+    page.locator("#progressBtn").click()
+    assert hostile_id in page.locator("#stats").inner_text()
+    assert page.locator("#stats img").count() == 0
+    assert page.locator("#stats script, #stats [onerror], #stats [onclick]").count() == 0
+    assert page.evaluate("window.auditImportExecuted === true") is False
+    assert payload_requests == [], payload_requests
+    assert errors == [], errors
+    page.close()
+    context.close()
+
+    # A denied localStorage getter also falls back safely at startup and does
+    # not replace the inaccessible raw recovery bytes.
+    context = browser.new_context(viewport={"width": 390, "height": 844})
+    page = context.new_page()
+    page.add_init_script("""(() => {
+        localStorage.setItem('triEchoSaveV1', '{"stats":{"shots":5}}');
+        const original = Storage.prototype.getItem;
+        window.__pr8RestoreGetItem = () => { Storage.prototype.getItem = original; };
+        Storage.prototype.getItem = function(key) { if (key === 'triEchoSaveV1') throw new DOMException('denied', 'SecurityError'); return original.call(this, key); };
+    })()""")
+    page.goto(ROOT, wait_until="networkidle")
+    page.locator("#progressBtn").click()
+    assert "Tacadas: 0" in page.locator("#stats").inner_text()
+    page.evaluate("window.__pr8RestoreGetItem()")
+    assert page.evaluate("localStorage.getItem('triEchoSaveV1')") == '{"stats":{"shots":5}}'
+    page.close()
+    context.close()
+
+    # Startup rejects malformed local bytes without overwriting the recovery
+    # source, and still presents a usable default Progress view.
+    context = browser.new_context(viewport={"width": 390, "height": 844})
+    page = context.new_page()
+    corrupt = '{not valid json'
+    page.add_init_script(f"localStorage.setItem('triEchoSaveV1', {json.dumps(corrupt)})")
+    page.goto(ROOT, wait_until="networkidle")
+    assert page.evaluate("localStorage.getItem('triEchoSaveV1')") == corrupt
+    page.locator("#progressBtn").click()
+    assert "Tacadas: 0" in page.locator("#stats").inner_text()
+    page.close()
+    context.close()
+
+    # A denied persistence write is a transaction failure: the active round,
+    # old bytes and live settings stay intact and success is never reported.
+    context = browser.new_context(viewport={"width": 412, "height": 915})
+    page = context.new_page()
+    errors = []
+    page.on("console", lambda msg: errors.append(msg.text) if msg.type == "error" else None)
+    page.on("pageerror", lambda err: errors.append(str(err)))
+    page.goto(ROOT, wait_until="networkidle")
+    page.locator("#playBtn").click()
+    before_round = page.evaluate("window.__TRI_ECHO__.state()")
+    before_bytes = page.evaluate("localStorage.getItem('triEchoSaveV1')")
+    page.locator("#settingsBtn").click()
+    page.locator("#importFile").set_input_files({"name": "invalid.json", "mimeType": "application/json", "buffer": b'{"stats":{"shots":"9"}}'})
+    page.wait_for_function("document.querySelector('#toast').textContent === 'FICHEIRO INVÁLIDO'")
+    assert page.evaluate("localStorage.getItem('triEchoSaveV1')") == before_bytes
+    rejected_round = page.evaluate("window.__TRI_ECHO__.state()")
+    for field in ("mode", "holeIndex", "seed", "tableStyle", "ballState", "ruleState", "inventory", "soundEnabled", "controlPos", "rails", "roundEpoch", "activePower"):
+        assert rejected_round[field] == before_round[field], field
+    page.evaluate("""() => {
+        const original = Storage.prototype.setItem;
+        window.__pr8RestoreSetItem = () => { Storage.prototype.setItem = original; };
+        Storage.prototype.setItem = function(key, value) {
+            if (key === 'triEchoSaveV1') throw new DOMException('quota', 'QuotaExceededError');
+            return original.call(this, key, value);
+        };
+    }""")
+    valid_json = json.dumps({"stats": {"shots": 99, "successes": 88, "recent": []}, "settings": {"sound": False, "haptics": False, "reducedMotion": True, "contactPos": {"x": .1, "y": .9}}})
+    page.locator("#importFile").set_input_files({"name": "denied.json", "mimeType": "application/json", "buffer": valid_json.encode()})
+    page.wait_for_function("document.querySelector('#toast').textContent.includes('NÃO FOI POSSÍVEL')")
+    assert page.evaluate("localStorage.getItem('triEchoSaveV1')") == before_bytes
+    after_round = page.evaluate("window.__TRI_ECHO__.state()")
+    for field in ("mode", "holeIndex", "seed", "tableStyle", "ballState", "ruleState", "inventory", "soundEnabled", "controlPos", "rails", "roundEpoch", "activePower"):
+        assert after_round[field] == before_round[field], field
+    assert page.locator("#toast").inner_text() != "PROGRESSO IMPORTADO"
+    page.evaluate("window.__pr8RestoreSetItem()")
+    page.evaluate("""() => {
+        const original = Storage.prototype.setItem;
+        window.__pr8RestoreSecuritySetItem = () => { Storage.prototype.setItem = original; };
+        Storage.prototype.setItem = function(key, value) {
+            if (key === 'triEchoSaveV1') throw new DOMException('denied', 'SecurityError');
+            return original.call(this, key, value);
+        };
+    }""")
+    page.locator("#importFile").set_input_files({"name": "security-denied.json", "mimeType": "application/json", "buffer": valid_json.encode()})
+    page.wait_for_function("document.querySelector('#toast').textContent.includes('NÃO FOI POSSÍVEL')")
+    assert page.evaluate("localStorage.getItem('triEchoSaveV1')") == before_bytes
+    assert page.evaluate("window.__TRI_ECHO__.state().roundEpoch") == before_round["roundEpoch"]
+    page.evaluate("window.__pr8RestoreSecuritySetItem()")
+    page.locator("#settings .close").click()
+    page.locator("#homeBtn").click()
+    page.locator("#progressBtn").click()
+    assert "Tacadas: 0" in page.locator("#stats").inner_text()
+    assert errors == [], errors
+    page.close()
+    context.close()
+
+    # A committed import updates preferences and their controls while retaining
+    # the already-generated round, including the live table and inventory.
+    context = browser.new_context(viewport={"width": 412, "height": 915})
+    page = context.new_page()
+    errors = []
+    page.on("console", lambda msg: errors.append(msg.text) if msg.type == "error" else None)
+    page.on("pageerror", lambda err: errors.append(str(err)))
+    page.goto(ROOT, wait_until="networkidle")
+    page.locator("#playBtn").click()
+    before_round = page.evaluate("window.__TRI_ECHO__.state()")
+    page.locator("#settingsBtn").click()
+    reconciled_json = json.dumps({
+        "stats": {"shots": 31, "successes": 9, "recent": [True]},
+        "settings": {"sound": False, "haptics": False, "reducedMotion": True, "contactPos": {"x": .15, "y": .85}},
+        "mode": "classic", "difficulty": "hard", "tableStyle": "snooker",
+        "trainingDiscipline": "snooker", "trickDiscipline": "british"
+    })
+    page.locator("#importFile").set_input_files({"name": "reconciled.json", "mimeType": "application/json", "buffer": reconciled_json.encode()})
+    page.wait_for_function("document.querySelector('#toast').textContent === 'PROGRESSO IMPORTADO'")
+    after_round = page.evaluate("window.__TRI_ECHO__.state()")
+    for field in ("mode", "holeIndex", "seed", "tableStyle", "ballState", "ruleState", "inventory", "rails", "roundEpoch", "activePower"):
+        assert after_round[field] == before_round[field], field
+    assert after_round["soundEnabled"] is False
+    assert after_round["controlPos"] == {"x": .15, "y": .85}
+    assert page.locator("#sound").is_checked() is False
+    assert page.locator("#haptics").is_checked() is False
+    assert page.locator("#reduced").is_checked() is True
+    page.locator("#settings .close").click()
+    page.locator("#homeBtn").click()
+    assert page.locator("#mode").input_value() == "classic"
+    assert page.locator("#difficulty").input_value() == "hard"
+    assert page.locator("#tableStyle").input_value() == "snooker"
+    assert page.locator("#trainingDiscipline").input_value() == "snooker"
+    assert page.locator("#trickDiscipline").input_value() == "british"
+    contact_box, stage_box = page.locator("#contactControl").bounding_box(), page.locator("#stage").bounding_box()
+    assert stage_box["x"] <= contact_box["x"] and contact_box["x"] + contact_box["width"] <= stage_box["x"] + stage_box["width"]
+    assert stage_box["y"] <= contact_box["y"] and contact_box["y"] + contact_box["height"] <= stage_box["y"] + stage_box["height"]
+    page.locator("#continueBtn").click()
+    assert page.evaluate("window.__TRI_ECHO__.state().roundEpoch") == before_round["roundEpoch"]
+    assert errors == [], errors
+    page.close()
+    context.close()
+
+    # Out-of-order File.text() completions use only the latest selection. This
+    # is a browser-only interception; production has no test seam.
+    context = browser.new_context(viewport={"width": 412, "height": 915})
+    page = context.new_page()
+    errors = []
+    page.on("console", lambda msg: errors.append(msg.text) if msg.type == "error" else None)
+    page.on("pageerror", lambda err: errors.append(str(err)))
+    page.goto(ROOT, wait_until="networkidle")
+    page.locator("#openSettings").click()
+    page.evaluate("""() => {
+        const original = File.prototype.text;
+        window.__pr8PendingReads = {};
+        window.__pr8RestoreFileText = () => { File.prototype.text = original; };
+        File.prototype.text = function() {
+            return new Promise((resolve, reject) => { window.__pr8PendingReads[this.name] = {resolve, reject}; });
+        };
+    }""")
+    older = json.dumps({"stats": {"shots": 11, "successes": 0, "recent": []}})
+    latest = json.dumps({"stats": {"shots": 22, "successes": 2, "recent": []}})
+    page.locator("#importFile").set_input_files({"name": "older.json", "mimeType": "application/json", "buffer": older.encode()})
+    page.locator("#importFile").set_input_files({"name": "latest.json", "mimeType": "application/json", "buffer": latest.encode()})
+    page.wait_for_function("window.__pr8PendingReads['older.json'] && window.__pr8PendingReads['latest.json']")
+    page.evaluate("value => window.__pr8PendingReads['latest.json'].resolve(value)", latest)
+    page.wait_for_function("document.querySelector('#toast').textContent === 'PROGRESSO IMPORTADO'")
+    page.evaluate("() => window.__pr8PendingReads['older.json'].reject(new Error('stale failure'))")
+    page.wait_for_timeout(80)
+    committed = page.evaluate("JSON.parse(localStorage.getItem('triEchoSaveV1'))")
+    assert committed["stats"]["shots"] == 22
+    assert page.locator("#toast").inner_text() == "PROGRESSO IMPORTADO"
+    assert page.locator("#importFile").input_value() == ""
+    # An older *success* cannot overwrite the newer invalid selection either.
+    page.locator("#importFile").set_input_files({"name": "older-success.json", "mimeType": "application/json", "buffer": older.encode()})
+    page.locator("#importFile").set_input_files({"name": "latest-invalid.json", "mimeType": "application/json", "buffer": b"{bad"})
+    page.wait_for_function("window.__pr8PendingReads['older-success.json'] && window.__pr8PendingReads['latest-invalid.json']")
+    page.evaluate("value => window.__pr8PendingReads['latest-invalid.json'].resolve(value)", "{bad")
+    page.wait_for_function("document.querySelector('#toast').textContent === 'FICHEIRO INVÁLIDO'")
+    page.evaluate("value => window.__pr8PendingReads['older-success.json'].resolve(value)", older)
+    page.wait_for_timeout(80)
+    assert page.evaluate("JSON.parse(localStorage.getItem('triEchoSaveV1')).stats.shots") == 22
+    assert page.locator("#toast").inner_text() == "FICHEIRO INVÁLIDO"
+    page.evaluate("window.__pr8RestoreFileText()")
+    assert errors == [], errors
+    page.close()
+    context.close()
+
+    # Closing the importing dialog cancels the pending request; an eventual
+    # read completion cannot overwrite a round that has resumed.
+    context = browser.new_context(viewport={"width": 412, "height": 915})
+    page = context.new_page()
+    errors = []
+    page.on("console", lambda msg: errors.append(msg.text) if msg.type == "error" else None)
+    page.on("pageerror", lambda err: errors.append(str(err)))
+    page.goto(ROOT, wait_until="networkidle")
+    page.locator("#playBtn").click()
+    before_round = page.evaluate("window.__TRI_ECHO__.state()")
+    before_bytes = page.evaluate("localStorage.getItem('triEchoSaveV1')")
+    page.locator("#settingsBtn").click()
+    page.evaluate("""() => {
+        const original = File.prototype.text;
+        window.__pr8RestoreCancelledText = () => { File.prototype.text = original; };
+        File.prototype.text = () => new Promise(resolve => window.__pr8ResolveCancelled = resolve);
+    }""")
+    page.locator("#importFile").set_input_files({"name": "cancelled.json", "mimeType": "application/json", "buffer": latest.encode()})
+    page.wait_for_function("typeof window.__pr8ResolveCancelled === 'function'")
+    page.locator("#settings .close").click()
+    page.evaluate("value => window.__pr8ResolveCancelled(value)", latest)
+    page.wait_for_timeout(80)
+    assert page.evaluate("localStorage.getItem('triEchoSaveV1')") == before_bytes
+    after_round = page.evaluate("window.__TRI_ECHO__.state()")
+    for field in ("mode", "holeIndex", "seed", "tableStyle", "ballState", "ruleState", "inventory"):
+        assert after_round[field] == before_round[field], field
+    assert page.locator("#toast").inner_text() != "PROGRESSO IMPORTADO"
+    # Escape also cancels before a newly started round can record a shot.
+    page.locator("#settingsBtn").click()
+    page.locator("#importFile").set_input_files({"name": "escape-new-round.json", "mimeType": "application/json", "buffer": latest.encode()})
+    page.keyboard.press("Escape")
+    page.wait_for_function("!document.querySelector('#settings').open")
+    page.locator("#homeBtn").click()
+    page.locator("#mode").select_option("tour")
+    page.locator("#playBtn").click()
+    take_short_shot(page)
+    page.locator("#settingsBtn").click()
+    shot_bytes = page.evaluate("localStorage.getItem('triEchoSaveV1')")
+    new_round = page.evaluate("window.__TRI_ECHO__.state()")
+    assert json.loads(shot_bytes)["stats"]["shots"] == 1
+    page.evaluate("value => window.__pr8ResolveCancelled(value)", latest)
+    page.wait_for_timeout(80)
+    assert page.evaluate("localStorage.getItem('triEchoSaveV1')") == shot_bytes
+    assert page.evaluate("window.__TRI_ECHO__.state().seed") == new_round["seed"]
+    page.evaluate("window.__pr8RestoreCancelledText()")
+    assert errors == [], errors
+    page.close()
+    context.close()
+
+    # Exported canonical data reimports through the file input; clearing the
+    # input allows selecting the same physical file again.
+    context = browser.new_context(viewport={"width": 1024, "height": 800}, accept_downloads=True)
+    page = context.new_page()
+    page.goto(ROOT, wait_until="networkidle")
+    page.locator("#openSettings").click()
+    page.locator("#importFile").set_input_files({"name": "roundtrip.json", "mimeType": "application/json", "buffer": valid_json.encode()})
+    page.wait_for_function("document.querySelector('#toast').textContent === 'PROGRESSO IMPORTADO'")
+    with page.expect_download() as download_info:
+        page.locator("#exportBtn").click()
+    download = download_info.value
+    assert download.suggested_filename == "tri-echo-progress.json"
+    exported = Path(download.path()).read_bytes()
+    # The input was cleared after the first selection, so this is the first
+    # import of a physical file that will then be selected identically again.
+    page.locator("#importFile").set_input_files({"name": "tri-echo-progress.json", "mimeType": "application/json", "buffer": exported})
+    page.wait_for_function("document.querySelector('#toast').textContent === 'PROGRESSO IMPORTADO'")
+    assert page.locator("#importFile").input_value() == ""
+    page.evaluate("""() => {
+        window.__pr8Writes = 0;
+        const original = Storage.prototype.setItem;
+        window.__pr8RestoreRetrySetItem = () => { Storage.prototype.setItem = original; };
+        Storage.prototype.setItem = function(key, value) { if (key === 'triEchoSaveV1') window.__pr8Writes++; return original.call(this, key, value); };
+        document.querySelector('#toast').textContent = '';
+    }""")
+    page.locator("#importFile").set_input_files({"name": "tri-echo-progress.json", "mimeType": "application/json", "buffer": exported})
+    page.wait_for_function("document.querySelector('#toast').textContent === 'PROGRESSO IMPORTADO'")
+    assert page.locator("#importFile").input_value() == ""
+    assert page.evaluate("window.__pr8Writes") == 1
+    page.evaluate("window.__pr8RestoreRetrySetItem()")
+    assert json.loads(exported)["stats"]["shots"] == 99
+    assert page.evaluate("JSON.parse(localStorage.getItem('triEchoSaveV1'))") == json.loads(exported)
+    with page.expect_download() as second_download:
+        page.locator("#exportBtn").click()
+    assert json.loads(Path(second_download.value.path()).read_bytes()) == json.loads(exported)
+    page.close()
+    context.close()
 
     # Persisted sound=false is effective immediately after reload.
     page = browser.new_page(viewport={"width": 390, "height": 844})
