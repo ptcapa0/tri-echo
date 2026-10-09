@@ -1,10 +1,100 @@
 from pathlib import Path
 import os
+import json
+import sys
+import shutil
+import subprocess
+import tempfile
+import threading
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
+from urllib.parse import quote
 from playwright.sync_api import sync_playwright
 
 ROOT = os.environ.get("PLAYTEST_ROOT", "http://127.0.0.1:8080").rstrip("/")
 OUT = Path(os.environ.get("PLAYTEST_ARTIFACTS", "tests/artifacts"))
 OUT.mkdir(exist_ok=True)
+
+
+class _PR9Fixture:
+    """Small same-origin production fixture; faults are seen by the worker."""
+    def __init__(self, root):
+        self.root = Path(root)
+        self.fault = None
+        self.inject_cache_put = False
+        self.inject_cleanup = False
+        self.requests = []
+        fixture = self
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *_): pass
+            def do_GET(self):
+                from urllib.parse import urlsplit, unquote
+                path = unquote(urlsplit(self.path).path)
+                prefix = '/other/' if path.startswith('/other/') else '/client/'
+                if not path.startswith(prefix):
+                    self.send_error(404); return
+                relative = path[len(prefix):].lstrip('/') or 'index.html'
+                fixture.requests.append({'path':relative,'fault':fixture.fault and fixture.fault.get('kind'),'destination':self.headers.get('Sec-Fetch-Dest')})
+                if '..' in Path(relative).parts:
+                    self.send_error(403); return
+                fault = fixture.fault
+                if fault and (fault['path'] == relative or fault['path'] == '*'):
+                    kind = fault['kind']
+                    if kind == '404': self.send_error(404); return
+                    if kind == '500': self.send_error(500); return
+                    if kind == 'redirect':
+                        self.send_response(302); self.send_header('Location', '/client/index.html'); self.end_headers(); return
+                    if kind == 'disconnect': self.connection.close(); return
+                file = fixture.root / relative
+                if not file.is_file():
+                    # The deployment host's navigation fallback is deliberate;
+                    # module/CSS/image requests remain ordinary 404s.
+                    if self.headers.get('Accept', '').find('text/html') >= 0:
+                        file = fixture.root / 'index.html'
+                    else:
+                        self.send_response(404); self.send_header('Content-Type', 'text/plain; charset=utf-8'); self.end_headers(); self.wfile.write(b'Not found'); return
+                body = file.read_bytes()
+                if fault and fault['path'] == relative and fault['kind'] == 'stale':
+                    body = fault.get('body', (fixture.root / 'index.html').read_bytes())
+                if relative == 'sw.js' and fixture.inject_cache_put:
+                    body += b"\nCache.prototype.put=async()=>{throw new Error('PR9 injected cache.put failure')};\n"
+                if relative == 'sw.js' and fixture.inject_cleanup:
+                    body += b"\nconst nativeDelete=CacheStorage.prototype.delete;CacheStorage.prototype.delete=function(key){if(key.endsWith('-orphan'))throw new Error('test cleanup');return nativeDelete.call(this,key)};\n"
+                types = {'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'text/javascript; charset=utf-8','.json':'application/json; charset=utf-8','.webmanifest':'application/manifest+json','.svg':'image/svg+xml','.png':'image/png'}
+                media = 'text/plain; charset=utf-8' if fault and fault['path'] == relative and fault['kind'] == 'mime' else types.get(file.suffix, 'application/octet-stream')
+                self.send_response(200); self.send_header('Content-Type', media); self.send_header('Cache-Control', 'no-cache'); self.end_headers(); self.wfile.write(body)
+        self.http = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        self.thread = threading.Thread(target=self.http.serve_forever, daemon=True)
+        self.thread.start()
+        self.url = f'http://127.0.0.1:{self.http.server_port}/client/'
+    def close(self):
+        self.http.shutdown(); self.thread.join(timeout=5); self.http.server_close()
+
+
+def _pr9_build_fixture(repo, destination, legacy=False, variant=False):
+    """Build exact git-main legacy and two PR9 releases in disposable trees."""
+    destination = Path(destination)
+    baseline = '897a45ca0ba1a9174c46baaf45c2d65c6f875233'
+    if legacy:
+        destination.mkdir()
+        present = subprocess.run(['git', 'cat-file', '-e', f'{baseline}^{{commit}}'], cwd=repo).returncode == 0
+        if not present:
+            # CI shallow clones need the contract's immutable 4.7.1 object;
+            # failing is safer than silently using whichever main is present.
+            subprocess.run(['git', 'fetch', '--depth=1', 'origin', baseline], cwd=repo, check=True)
+        archive = subprocess.run(['git', 'archive', baseline], cwd=repo, check=True, stdout=subprocess.PIPE).stdout
+        subprocess.run(['tar', '-x', '-C', str(destination)], input=archive, check=True)
+    else:
+        shutil.copytree(repo, destination, ignore=shutil.ignore_patterns('.git', 'dist', 'node_modules', 'tests/artifacts', '__pycache__'))
+    if variant:
+        package = destination / 'package.json'
+        data = json.loads(package.read_text()); data['version'] = '4.7.3-test'; package.write_text(json.dumps(data, indent=2) + '\n')
+        with (destination / 'js' / 'app.js').open('a') as output: output.write('\n// PR9 fixture B release identity\n')
+    environment = os.environ.copy()
+    environment['GITHUB_SHA'] = baseline if legacy else subprocess.run(
+        ['git', 'rev-parse', 'HEAD'], cwd=repo, check=True, stdout=subprocess.PIPE, text=True
+    ).stdout.strip()
+    subprocess.run(['npm', 'run', 'build'], cwd=destination, check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=environment)
+    return destination / 'dist' / 'client'
 
 def take_short_shot(page, pull=48):
     canvas = page.locator("#game")
@@ -79,6 +169,305 @@ def begin_floating_pull(page, pointer_id, pull_fraction=.75):
         "pointerId": pointer_id, "clientX": current[0], "clientY": current[1]
     })
     return origin, current, page.evaluate("window.__TRI_ECHO__.state()")
+
+
+def _pr9_snapshot(page, label, errors):
+    """Persist the service-worker facts which make an offline result auditable."""
+    data = page.evaluate("""async () => {
+        const registration = await navigator.serviceWorker.ready;
+        const cachesForScope = (await caches.keys()).filter(key => key.startsWith('tri-echo-pr9-'));
+        return {
+            href: location.href,
+            scope: registration.scope,
+            controller: navigator.serviceWorker.controller?.scriptURL || null,
+            worker: registration.active?.state || null,
+            caches: cachesForScope,
+        };
+    }""")
+    data["errors"] = errors
+    (OUT / f"pr9-{label}.json").write_text(json.dumps(data, indent=2) + "\n")
+    return data
+
+
+def run_pr9_only(root=ROOT):
+    """Focused PR9 acceptance against a built production server (including /client/).
+
+    This intentionally uses a fresh browser context: it clears Chromium's HTTP
+    cache through CDP while retaining Cache Storage, which is the regression
+    protocol that exposed 4.7.1's missing-module fallback.
+    """
+    root = root.rstrip("/") + "/"
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context(viewport={"width": 390, "height": 844}, service_workers="allow")
+        page = context.new_page()
+        errors = []
+        responses=[]
+        page.on("response",lambda r:responses.append({"url":r.url,"status":r.status,"media":r.headers.get("content-type"),"from_service_worker":r.from_service_worker}))
+        page.on("console", lambda msg: errors.append(f"console: {msg.text}") if msg.type == "error" else None)
+        page.on("pageerror", lambda error: errors.append(f"page: {error}"))
+        page.goto(root, wait_until="networkidle")
+
+        # A01: the initial network document is deliberately not claimed.  The
+        # active worker becomes authoritative only on the controlled reload.
+        assert page.evaluate("navigator.serviceWorker.controller === null")
+        manifest = page.evaluate("async () => await (await fetch('./precache-manifest.json', {cache:'no-store'})).json()")
+        assert manifest["schema"] == 1
+        assert manifest["resources"] and manifest["releaseId"]
+        ready = page.evaluate("""async () => {
+            const registration = await navigator.serviceWorker.ready;
+            return {scope: registration.scope, state: registration.active?.state};
+        }""")
+        assert ready["state"] == "activated"
+        expected_cache = "tri-echo-pr9-" + quote(ready["scope"], safe="") + "-" + manifest["releaseId"]
+        page.reload(wait_until="networkidle")
+        page.wait_for_function("navigator.serviceWorker.controller !== null")
+
+        # Verify that every descriptor byte and media category is present in
+        # the release-local cache.  This is intentionally not caches.match(),
+        # which could hide a cross-release cache selection defect.
+        verified = page.evaluate("""async ({resources, scope, expectedCache}) => {
+            const cache = await caches.open(expectedCache);
+            const category = {
+                html: /^text\\/html/i, css: /^text\\/css/i, javascript: /javascript/i,
+                json: /json/i, svg: /image\\/svg\\+xml/i, png: /^image\\/png/i
+            };
+            const digest = async bytes => {
+                const value = await crypto.subtle.digest('SHA-256', bytes);
+                return [...new Uint8Array(value)].map(x => x.toString(16).padStart(2, '0')).join('');
+            };
+            const results = [];
+            for (const resource of resources) {
+                const response = await cache.match(new URL(resource.path, scope).href);
+                results.push({path: resource.path, present: !!response,
+                    media: response?.headers.get('content-type') || '',
+                    digest: response && await digest(await response.arrayBuffer()),
+                    expected: resource.sha256, category: resource.category,
+                    mediaOK: response && category[resource.category]?.test(response.headers.get('content-type') || '')});
+            }
+            const marker = await cache.match(new URL('__tri_echo_complete__', scope).href);
+            return {results, marker: !!marker, keys: await caches.keys()};
+        }""", {"resources": manifest["resources"], "scope": ready["scope"], "expectedCache": expected_cache})
+        assert verified["marker"], "complete marker missing"
+        assert expected_cache in verified["keys"]
+        assert all(item["present"] and item["digest"] == item["expected"] and item["mediaOK"] for item in verified["results"]), verified["results"]
+        assert errors == [], errors
+        _pr9_snapshot(page, "online", errors)
+
+        # A05: unknown resources remain resource failures; navigation stays
+        # app-shell fallback.  Query canonicalization is only allowed for a
+        # known immutable descriptor resource.
+        missing = page.evaluate("""async () => {
+            const response = await fetch('./missing-pr9-module.js');
+            return {status: response.status, media: response.headers.get('content-type')};
+        }""")
+        assert missing['status'] == 404 and 'html' not in (missing['media'] or '').lower()
+        probe = context.new_page()
+        navigation = probe.goto(f"{root}offline-route?from=pr9", wait_until='domcontentloaded')
+        assert navigation.status == 200 and 'TRI//ECHO' in probe.content()
+        probe.close()
+        # Expected 404 diagnostics belong to this explicit policy probe.
+        assert all("404" in message for message in errors), errors
+        errors.clear()
+
+        cdp = context.new_cdp_session(page)
+        cdp.send("Network.enable")
+        keys_before_clear=page.evaluate("caches.keys()")
+        cdp.send("Network.clearBrowserCache")
+        assert page.evaluate("caches.keys()") == keys_before_clear
+        responses.clear()
+        context.set_offline(True)
+        page.reload(wait_until="domcontentloaded")
+        page.wait_for_function("typeof window.__TRI_ECHO__ === 'object' && document.querySelector('#menu').open")
+
+        # A02/A03: prove application boot and real input execution offline,
+        # including the traditional and Daily mode families.
+        offline_modes = ("golf", "classic", "american", "british", "daily")
+        results = []
+        for mode in offline_modes:
+            if mode != "golf":
+                page.locator("#mode").select_option(mode)
+            page.locator("#playBtn").click()
+            before = page.evaluate("window.__TRI_ECHO__.state().strokes")
+            take_short_shot(page)
+            page.wait_for_function("before => window.__TRI_ECHO__.state().strokes > before", arg=before)
+            page.wait_for_function("window.__TRI_ECHO__.state().active === false", timeout=25000)
+            results.append({"mode": mode, "strokes": page.evaluate("window.__TRI_ECHO__.state().strokes")})
+            page.locator("#homeBtn").click()
+        assert all(result["strokes"] > 0 for result in results)
+        _pr9_snapshot(page, "cold-offline", errors)
+        page.screenshot(path=str(OUT / "pr9-cold-offline.png"), full_page=True)
+        (OUT / "pr9-cold-offline-results.json").write_text(json.dumps({
+            "root": root, "scope": ready["scope"], "releaseId": manifest["releaseId"],
+            "version":manifest["version"], "commit":manifest["commit"], "browser_version":browser.version, "verified_resources":verified["results"], "http_cache_cleared":True, "cache_storage_retained":True,
+            "cache": expected_cache, "modes": results, "errors": errors, "offline_responses":responses
+        }, indent=2) + "\n")
+        assert errors == [], errors
+        context.set_offline(False)
+        context.close()
+        browser.close()
+
+
+def run_pr9_fixture_matrix():
+    """Production worker network/update tests, with immutable legacy and skew fixtures."""
+    repo = Path(__file__).resolve().parents[1]
+    with tempfile.TemporaryDirectory(prefix='tri-echo-pr9-') as temp:
+        temp = Path(temp)
+        legacy = _pr9_build_fixture(repo, temp / 'legacy', legacy=True)
+        release_a = _pr9_build_fixture(repo, temp / 'release-a')
+        release_b = _pr9_build_fixture(repo, temp / 'release-b', variant=True)
+        fixture = _PR9Fixture(release_a)
+        ma=json.loads((release_a/'precache-manifest.json').read_text())
+        mb=json.loads((release_b/'precache-manifest.json').read_text())
+        prefix='tri-echo-pr9-'+quote(fixture.url,safe='')+'-'
+        ca,cb=prefix+ma['releaseId'],prefix+mb['releaseId']
+        evidence={'server':fixture.url,'release_a':ma,'release_b':mb,'faults':[],'updates':[]}
+        try:
+            run_pr9_only(fixture.url)
+            with sync_playwright() as p:
+                browser=p.chromium.launch(headless=True)
+                evidence['browser_version']=browser.version
+                def controlled(context,url=None):
+                    page=context.new_page();page.goto(url or fixture.url,wait_until='networkidle')
+                    page.evaluate('navigator.serviceWorker.ready.then(()=>true)')
+                    page.reload(wait_until='networkidle')
+                    page.wait_for_function('navigator.serviceWorker.controller !== null')
+                    return page
+                def update(page):
+                    # Attach before update(): fast failed installs must not
+                    # disappear between the check and the assertion.
+                    return page.evaluate("""async () => {
+                        const r=await navigator.serviceWorker.getRegistration();
+                        let timer;
+                        const done=new Promise((resolve,reject)=>{
+                            timer=setTimeout(()=>reject(Error('update transition timeout')),15000);
+                            r.addEventListener('updatefound',()=>{
+                                const w=r.installing;
+                                const changed=()=>{if(['installed','redundant'].includes(w.state))resolve(w.state)};
+                                w.addEventListener('statechange',changed);changed();
+                            },{once:true});
+                        });
+                        try{await r.update();return await done}finally{clearTimeout(timer)}
+                    }""")
+                def identity(page):
+                    return page.evaluate("async () => (await (await fetch('./precache-manifest.json')).json()).releaseId")
+                def snapshot(page):
+                    return page.evaluate("""() => {
+                        const x=window.__TRI_ECHO__.state();return Object.fromEntries(
+                        ['mode','seed','roundEpoch','ballState','ruleState','rails','inventory','score','strokes'].map(k=>[k,x[k]]));
+                    }""")
+                def activate(context,pages,expected):
+                    # An origin page outside the scope can observe activation
+                    # without keeping the old application worker in use.
+                    observer=context.new_page();observer.goto(fixture.url.replace('/client/','/observer'),wait_until='domcontentloaded')
+                    for page in pages:page.close()
+                    observer.wait_for_function("""async scope => {
+                        const r=await navigator.serviceWorker.getRegistration(scope);
+                        return r?.active?.state==='activated' && !r.waiting && !r.installing;
+                    }""",arg=fixture.url)
+                    fresh=controlled(context);assert identity(fresh)==expected;observer.close();return fresh
+                for kind in ['404','500','redirect','mime','stale','disconnect','put']:
+                    fixture.root=release_a
+                    context=browser.new_context(service_workers='allow');page=controlled(context)
+                    before=page.evaluate('caches.keys()');assert ca in before
+                    fixture.root=release_b;fixture.requests.clear()
+                    fixture.inject_cache_put=kind=='put'
+                    if kind!='put':fixture.fault={'path':'js/app.js','kind':kind,'body':(release_a/'js/app.js').read_bytes()}
+                    state=update(page);assert state=='redundant',kind
+                    assert identity(page)==ma['releaseId']
+                    after=page.evaluate('caches.keys()');assert after==before and cb not in after,(kind,after)
+                    if kind!='put':assert any(r['path']=='js/app.js' and r['fault']==kind for r in fixture.requests)
+                    evidence['faults'].append({'kind':kind,'worker_state':state,'cache_unchanged':True,'requests':list(fixture.requests)})
+                    fixture.fault=None;fixture.inject_cache_put=False;context.close()
+
+                fixture.root=legacy
+                context=browser.new_context(service_workers='allow');old=controlled(context)
+                old.locator('#openSettings').click()
+                old.locator('#importFile').set_input_files({'name':'legacy.json','mimeType':'application/json','buffer':b'{"stats":{"shots":42},"settings":{"sound":false}}'})
+                old.wait_for_function("document.querySelector('#toast').textContent==='PROGRESSO IMPORTADO'")
+                old.locator('#settings .close').click()
+                old.locator('#playBtn').click();raw=old.evaluate("localStorage.getItem('triEchoSaveV1')");before=snapshot(old)
+                peer=controlled(context);fixture.root=release_a
+                assert update(old)=='installed'
+                old.wait_for_function("async () => !!(await navigator.serviceWorker.getRegistration()).waiting")
+                assert snapshot(old)==before and old.evaluate("localStorage.getItem('triEchoSaveV1')")==raw
+                peer.reload(wait_until='networkidle')
+                assert old.evaluate("async () => !!(await navigator.serviceWorker.getRegistration()).waiting")
+                fresh=activate(context,[old,peer],ma['releaseId'])
+                assert fresh.evaluate("localStorage.getItem('triEchoSaveV1')")==raw
+                evidence['updates'].append({'legacy_to_a':ma['releaseId'],'raw_save_preserved':True})
+
+                # PR8 still imports/exports through the updated controlled app.
+                fresh.locator('#openSettings').click()
+                fresh.locator('#importFile').set_input_files({'name':'pr9.json','mimeType':'application/json','buffer':b'{"stats":{"shots":9},"settings":{"sound":false}}'})
+                fresh.wait_for_function("document.querySelector('#toast').textContent==='PROGRESSO IMPORTADO'")
+                with fresh.expect_download() as dl:fresh.locator('#exportBtn').click()
+                assert json.loads(Path(dl.value.path()).read_bytes())['stats']['shots']==9
+                fresh.locator('#settings .close').click()
+
+                # Browser policy probes complement the routing unit tests.
+                policy=fresh.evaluate("""async () => {
+                    const statuses=[];for(const path of ['missing.js','missing.css','missing.png','/outside.css'])statuses.push((await fetch(path)).status);
+                    statuses.push((await fetch('./js/app.js',{method:'POST'})).status);return statuses;
+                }""")
+                assert policy==[404,404,404,404,501],policy
+                fixture.root=release_b;fixture.fault={'path':'js/app.js','kind':'stale','body':(release_a/'js/app.js').read_bytes()}
+                assert update(fresh)=='redundant';assert identity(fresh)==ma['releaseId']
+                pinned=fresh.evaluate("""async()=>{const r=await fetch('./js/app.js?candidate=B');return [...new Uint8Array(await crypto.subtle.digest('SHA-256',await r.arrayBuffer()))].map(x=>x.toString(16).padStart(2,'0')).join('')}""")
+                assert pinned==next(r['sha256'] for r in ma['resources'] if r['path']=='js/app.js')
+                caches_a=fresh.evaluate('caches.keys()')
+                context.new_cdp_session(fresh).send('Network.clearBrowserCache');context.set_offline(True)
+                survivor=context.new_page();survivor.goto(fixture.url,wait_until='networkidle')
+                survivor.locator('#playBtn').click();take_short_shot(survivor)
+                survivor.wait_for_function('window.__TRI_ECHO__.state().strokes>0 && !window.__TRI_ECHO__.state().active',timeout=25000)
+                assert survivor.evaluate('caches.keys()')==caches_a
+                survivor.close();context.set_offline(False);fixture.fault=None
+                evidence['updates'].append({'failed_b_kept_a_offline':True})
+
+                fresh.locator('#playBtn').click();before=snapshot(fresh)
+                peer=controlled(context);peer.locator('#playBtn').click();peer.locator('#homeBtn').click()
+                other=controlled(context,fixture.url.replace('/client/','/other/'))
+                other_id=identity(other)
+                unrelated='pr9-unrelated-origin-cache';orphan=prefix+'orphan'
+                fresh.evaluate('async keys=>{for(const key of keys)await caches.open(key)}',[unrelated,orphan])
+                fixture.inject_cleanup=True
+                assert update(fresh)=='installed'
+                assert snapshot(fresh)==before and identity(fresh)==ma['releaseId']
+                peer.reload(wait_until='networkidle');assert identity(peer)==ma['releaseId']
+                assert ca in peer.evaluate('caches.keys()')
+                fresh.locator('#homeBtn').click();fresh.locator('#continueBtn').click();assert snapshot(fresh)==before
+                bpage=activate(context,[fresh,peer],mb['releaseId'])
+                keys=bpage.evaluate('caches.keys()');assert cb in keys and ca not in keys and unrelated in keys and orphan in keys
+                assert identity(other)==other_id
+                evidence['updates'].append({'a_to_b':mb['releaseId'],'active_round_preserved':True,'other_scope_survived':True,'cleanup_failure_contained':True})
+                # Same-ID updated worker reuses complete bytes and retries cleanup.
+                fixture.inject_cleanup=False
+                assert update(bpage)=='installed'
+                bpage=activate(context,[bpage],mb['releaseId'])
+                assert orphan not in bpage.evaluate('caches.keys()') and unrelated in bpage.evaluate('caches.keys()')
+
+                victim='js/app.js';expected=next(r['sha256'] for r in mb['resources'] if r['path']==victim)
+                def corrupt():
+                    bpage.evaluate("""async ({cache,path})=>{await (await caches.open(cache)).put(new URL(path,location.href),new Response('corrupt',{headers:{'content-type':'text/javascript'}}))}""",{'cache':cb,'path':victim})
+                def probe():
+                    return bpage.evaluate("""async path=>{try{const r=await fetch(path);const b=await r.arrayBuffer();return {hash:[...new Uint8Array(await crypto.subtle.digest('SHA-256',b))].map(x=>x.toString(16).padStart(2,'0')).join(''),status:r.status}}catch{return {failed:true}}}""",victim)
+                corrupt();context.set_offline(True);assert probe()=={'failed':True};context.set_offline(False)
+                fixture.fault={'path':victim,'kind':'stale','body':(release_a/victim).read_bytes()};assert probe()=={'failed':True};fixture.fault=None
+                assert probe()['hash']==expected
+                bpage.evaluate("async ({cache,path})=>await (await caches.open(cache)).delete(new URL(path,location.href))",{'cache':cb,'path':victim})
+                assert probe()['hash']==expected
+                evidence['repair']={'corrupt_offline_rejected':True,'stale_online_rejected':True,'matching_online_repaired':True,'missing_online_repaired':True}
+                bpage.close();other.close();context.close();browser.close()
+            evidence['verdict']='PASS A01-A11';print(evidence['verdict'],flush=True)
+        finally:
+            (OUT/'pr9-fixture-matrix.json').write_text(json.dumps(evidence,indent=2)+'\n');fixture.close()
+
+
+if os.environ.get("PR9_ONLY") == "1":
+    run_pr9_fixture_matrix()
+    sys.exit(0)
+
+
 
 with sync_playwright() as p:
     browser = p.chromium.launch(headless=True)
@@ -775,19 +1164,17 @@ with sync_playwright() as p:
             assert classic["rails"] == 0
             assert page.locator(".power").count() == 0
         if name == "iphone":
-            assert page.evaluate("navigator.serviceWorker.ready.then(() => true)")
-            assert "tri-echo-v4.7.1" in page.request.get(f"{ROOT}/sw.js").text()
-            assert "tri-echo-v4.7.1" in page.evaluate("caches.keys()")
+            registration = page.evaluate("""async () => {
+                const registration = await navigator.serviceWorker.ready;
+                return {scope: registration.scope, active: registration.active?.state};
+            }""")
+            assert registration["active"] == "activated"
+            descriptor = page.evaluate("async () => await (await fetch('./precache-manifest.json', {cache:'no-store'})).json()")
+            expected_cache = "tri-echo-pr9-" + quote(registration["scope"], safe="") + "-" + descriptor["releaseId"]
+            assert expected_cache in page.evaluate("caches.keys()")
             page.evaluate("caches.open('playtest-unrelated-cache')")
-            page.evaluate("navigator.serviceWorker.getRegistration().then(registration => registration.unregister())")
-            page.reload(wait_until="networkidle")
-            assert page.evaluate("navigator.serviceWorker.ready.then(() => true)")
             assert "playtest-unrelated-cache" in page.evaluate("caches.keys()")
             page.evaluate("caches.delete('playtest-unrelated-cache')")
-            page.context.set_offline(True)
-            page.reload(wait_until="domcontentloaded")
-            assert page.locator("#playBtn").is_visible()
-            page.context.set_offline(False)
         page.close()
 
     # Floating Pull is translation-invariant across comfortable mobile origins.
@@ -1703,3 +2090,7 @@ with sync_playwright() as p:
     assert page.evaluate("window.__TRI_ECHO__.state().soundEnabled") is False
     page.close()
     browser.close()
+
+# The ordinary Chromium characterization is also the PR9 regression entry
+# point.  PR9_ONLY remains available for a focused CI/debug invocation.
+run_pr9_fixture_matrix()
