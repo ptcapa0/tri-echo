@@ -7,14 +7,30 @@ import {AIM_PROFILES,deriveAimPreview} from './aim-preview.js';
 import {GameplayPointerOwner} from './pointer-ownership.js';
 import {CUSHION_REQUIREMENTS} from './game-config.js';
 import {MODES,TABLE_STYLES,TRAINING_DISCIPLINES,TRICK_SHOTS,POWERS,parForTable,golfTerm,competitivePoints,trickPoints,freshPowerInventory,evaluateTrick} from './gameplay.js';
-import {loadSave,save,exportSave,importSave} from './storage.js';
+import {createProgressStore,exportSave,importSave} from './storage.js';
 import {AudioFX} from './audio.js';
 import {applySoundSetting,captureHoleStartState,completeDailyRun,dailyChallengeConfig,deriveShotResult,fusionCaromSucceeded,InteractionGate,recordHoleResult,restoreHoleStartState,RoundTaskController,shouldCreateEchoRail} from './rules.js';
 import {isLocalTestSeam} from './testability.js';
 
 const $=s=>document.querySelector(s),canvas=$('#game'),ctx=canvas.getContext('2d',{alpha:false}),audio=new AudioFX();
 const touchScope=document.createElement('style');touchScope.textContent='html,body{touch-action:auto}#stage,canvas,.contact-control,.move-contact,.cue-face,.powers{touch-action:none}dialog,.panel{touch-action:pan-y}';document.head.append(touchScope);document.querySelector('meta[name="viewport"]')?.setAttribute('content','width=device-width,initial-scale=1,viewport-fit=cover');
-let data=loadSave(),game=null,acc=0,last=performance.now(),drag=null,particles=[],toastTimer,echoMemoryTimer,echoMemoryRails=new Set(),echoMemoryKind=null,paused=true;
+const storageNotices=[];
+for(const parent of [document.querySelector('header'),...document.querySelectorAll('#menu .panel,#settings .panel,#progress .panel')]){
+ const notice=document.createElement('p');notice.className='storage-status';notice.setAttribute('role','status');notice.setAttribute('aria-live','polite');
+ parent.insertBefore(notice,parent.querySelector('label,#stats'));storageNotices.push(notice);
+}
+const retryStorage=document.createElement('button');retryStorage.id='retryStorage';retryStorage.textContent='Tentar guardar progresso';$('#settings .panel').insertBefore(retryStorage,$('#settings .close'));
+let storageMode=null;
+function storageStatus({mode}){
+ const message=mode==='corrupt'?'PROGRESSO TEMPORÁRIO · O progresso guardado está ilegível e foi preservado. As alterações perdem-se ao fechar. Exporta esta sessão; só uma importação válida pode substituir o guardado.':mode==='temporary'?'PROGRESSO TEMPORÁRIO · Não foi possível guardar. As alterações podem perder-se ao fechar. Podes exportar nas Definições.':'';
+ for(const notice of storageNotices){notice.textContent=message;notice.hidden=!message;notice.dataset.storageMode=mode}
+ retryStorage.hidden=mode!=='temporary';
+ if(mode!==storageMode){storageMode=mode;requestAnimationFrame(resize)}
+}
+const progressStore=createProgressStore({onStatus:storageStatus});
+const save=value=>progressStore.save(value);
+retryStorage.onclick=()=>{showToast(progressStore.retry()?'PROGRESSO GUARDADO':'NÃO FOI POSSÍVEL GUARDAR O PROGRESSO')};
+let data=progressStore.load(),game=null,acc=0,last=performance.now(),drag=null,particles=[],toastTimer,echoMemoryTimer,echoMemoryRails=new Set(),echoMemoryKind=null,paused=true;
 let contact={x:0,y:0},contactPointer=null,movePointer=null,controlPos=data.settings.contactPos||{x:.76,y:.02};
 const gameplayPointer=new GameplayPointerOwner();
 const railVisualKey=r=>`${r.a.x},${r.a.y}:${r.b.x},${r.b.y}`;
@@ -244,7 +260,7 @@ $('#importFile').onchange=async e=>{
  try{candidate=await importSave(file)}catch(error){if(request===importRequest)showToast(error?.code==='oversize'?'FICHEIRO DEMASIADO GRANDE':'FICHEIRO INVÁLIDO');return}
  if(request!==importRequest)return;
  // setItem is the sole commit point. No live mutation or rollback write precedes it.
- try{save(candidate)}catch{showToast('NÃO FOI POSSÍVEL GUARDAR O PROGRESSO');return}
+ try{progressStore.commitImport(candidate)}catch{showToast('NÃO FOI POSSÍVEL GUARDAR O PROGRESSO');return}
  data=candidate;
  try{reconcileImportedPreferences()}catch{showToast('PROGRESSO GUARDADO · ERRO AO ATUALIZAR CONTROLOS');return}
  showToast('PROGRESSO IMPORTADO');

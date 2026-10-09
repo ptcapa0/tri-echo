@@ -86,6 +86,39 @@ function parseSave(text,source){
 }
 export function loadSave(store){try{return parseSave((store??globalThis.localStorage).getItem(KEY)??'{}','local')}catch{return structuredClone(defaults)}}
 export function save(data,store=localStorage){store.setItem(KEY,JSON.stringify(data))}
+// A page-session boundary for ordinary gameplay writes. Strict imports retain
+// their durable-write-before-adoption contract and never enter the fallback.
+export function createProgressStore({getStore=()=>globalThis.localStorage,onStatus=()=>{}}={}){
+ let snapshot=null,loaded=false,protectedRaw=false,status={mode:'persistent',reason:null};
+ function report(mode,reason=null){status={mode,reason};onStatus({...status});return {...status}}
+ function write(serialized){getStore().setItem(KEY,serialized)}
+ function persist(serialized,{strict=false}={}){
+  try{write(serialized)}catch(error){report(protectedRaw?'corrupt':'temporary','unavailable');if(strict)throw error;return false}
+  protectedRaw=false;snapshot=serialized;report('persistent');return true;
+ }
+ return {
+  load(){
+   if(loaded)return JSON.parse(snapshot);
+   loaded=true;let raw;
+   try{raw=getStore().getItem(KEY)}catch{snapshot=JSON.stringify(defaults);report('temporary','unavailable');return JSON.parse(snapshot)}
+   let value;
+   try{value=parseSave(raw??'{}','local')}catch{value=structuredClone(defaults);protectedRaw=true}
+   snapshot=JSON.stringify(value);report(protectedRaw?'corrupt':'persistent',protectedRaw?'invalid-save':null);
+   return value;
+  },
+  save(data){
+   snapshot=JSON.stringify(data);
+   if(protectedRaw){report('corrupt','invalid-save');return false}
+   return persist(snapshot);
+  },
+  commitImport(data){
+   // Do not change the session snapshot if the durable write fails.
+   return persist(JSON.stringify(data),{strict:true});
+  },
+  retry(){if(snapshot===null||protectedRaw)return false;return persist(snapshot)},
+  get status(){return {...status}},
+ };
+}
 export function exportSave(data){return new Blob([JSON.stringify(data,null,2)],{type:'application/json'})}
 export async function importSave(file){
  if(!file||typeof file.size!=='number'||!Number.isFinite(file.size)||file.size<0||typeof file.text!=='function')invalid();
