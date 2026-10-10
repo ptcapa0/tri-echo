@@ -41,11 +41,32 @@ export function captureHoleStartState(game){return Object.fromEntries(HOLE_START
 export function restoreHoleStartState(game,snapshot){for(const key of HOLE_START_FIELDS)game[key]=structuredClone(snapshot[key]);return game}
 
 export class RoundTaskController{
- constructor(setTimer=(callback,delay)=>setTimeout(callback,delay),clearTimer=timer=>clearTimeout(timer)){this.setTimer=setTimer;this.clearTimer=clearTimer;this.epoch=0;this.timers=new Set()}
- beginRound(){for(const timer of this.timers)this.clearTimer(timer);this.timers.clear();return++this.epoch}
+ constructor(setTimer=(callback,delay)=>setTimeout(callback,delay),clearTimer=timer=>clearTimeout(timer),now=()=>performance.now()){
+  this.setTimer=setTimer;this.clearTimer=clearTimer;this.now=now;this.epoch=0;this.timers=new Set();this.tasks=new Set();this.suspended=false;
+ }
+ disarm(task){
+  task.arm=null;
+  if(task.timer!==null){this.clearTimer(task.timer);this.timers.delete(task.timer);task.timer=null}
+ }
+ beginRound(){for(const task of this.tasks)this.disarm(task);this.tasks.clear();return++this.epoch}
+ arm(task){
+  const arm={};task.arm=arm;task.deadline=this.now()+task.remaining;
+  task.timer=this.setTimer(()=>{
+   if(task.arm!==arm||task.epoch!==this.epoch||this.suspended||!this.tasks.has(task))return;
+   this.timers.delete(task.timer);task.timer=null;task.arm=null;this.tasks.delete(task);task.callback();
+  },task.remaining);
+  this.timers.add(task.timer);
+ }
  schedule(delay,callback){
-  const epoch=this.epoch;let timer;
-  timer=this.setTimer(()=>{this.timers.delete(timer);if(epoch===this.epoch)callback()},delay);
-  this.timers.add(timer);return timer;
+  const task={epoch:this.epoch,callback,remaining:Math.max(0,delay),deadline:0,timer:null,arm:null};
+  this.tasks.add(task);if(!this.suspended)this.arm(task);return task;
+ }
+ suspend(){
+  if(this.suspended)return;this.suspended=true;
+  for(const task of this.tasks){task.remaining=Math.max(0,task.deadline-this.now());this.disarm(task)}
+ }
+ resume(){
+  if(!this.suspended)return;this.suspended=false;
+  for(const task of this.tasks)this.arm(task);
  }
 }

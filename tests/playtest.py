@@ -2101,3 +2101,4 @@ run_pr9_fixture_matrix()
 import subprocess
 import sys
 subprocess.run([sys.executable, str(Path(__file__).with_name("storage-resilience.py"))], check=True)
+subprocess.run([sys.executable, str(Path(__file__).with_name("lifecycle-recovery.py"))], check=True)
