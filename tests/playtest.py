@@ -2094,3 +2094,10 @@ with sync_playwright() as p:
 # The ordinary Chromium characterization is also the PR9 regression entry
 # point.  PR9_ONLY remains available for a focused CI/debug invocation.
 run_pr9_fixture_matrix()
+
+# PR10 runs in its own server/profile because it replaces Web Storage at the
+# native boundary.  Keep it after every existing browser qualification,
+# including the PR9 coherent-update matrix above.
+import subprocess
+import sys
+subprocess.run([sys.executable, str(Path(__file__).with_name("storage-resilience.py"))], check=True)
